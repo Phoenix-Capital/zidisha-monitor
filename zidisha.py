@@ -274,9 +274,9 @@ with kpi_cols[4]:
 # -------------------------------------------------------------
 st.markdown("### 1) Branch Performance Overview")
 
-# Clustered bars: Principal vs Total Repayment by branch
+# Clustered bars: Expected vs Total Repayment by branch
 branch_disbursed = (
-    period_df.groupby("Branch Name", dropna=True)[["Principal Amount", "Total Repayment"]]
+    period_df.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
     .sum()
     .reset_index()
 )
@@ -289,9 +289,9 @@ fig_branch_disbursed = px.bar(
     y="Amount",
     color="Metric",
     barmode="group",
-    title="Principal vs Total Repayment by Branch",
+    title="Expected vs Total Repayment by Branch",
     color_discrete_map={
-        "Principal Amount": "#1f77b4",
+        "Total Expected Repayment": "#ff7f0e",
         "Total Repayment": "#2ca02c",
     },
 )
