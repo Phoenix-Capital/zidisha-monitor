@@ -475,6 +475,16 @@ day_branch = (
 
 day_branch = baseline.merge(day_branch, on="Branch Name", how="left").fillna(0)
 
+# Add aggregated "Zidisha" row = sum of all branches except those matching "advance"
+_non_advance_mask = ~day_branch["Branch Name"].str.strip().str.lower().str.contains("advance", na=False)
+_agg = day_branch.loc[_non_advance_mask, ["Total Repayment", "Total Expected Repayment"]].sum()
+zidisha_row = pd.DataFrame({
+    "Branch Name": ["Zidisha"],
+    "Total Repayment": [_agg.get("Total Repayment", 0.0)],
+    "Total Expected Repayment": [_agg.get("Total Expected Repayment", 0.0)],
+})
+day_branch = pd.concat([day_branch, zidisha_row], ignore_index=True)
+
 table_day = day_branch.copy()
 table_day["Repayment %"] = np.where(
     table_day["Total Expected Repayment"] > 0,
@@ -482,6 +492,10 @@ table_day["Repayment %"] = np.where(
     np.nan,
 )
 table_day = table_day.sort_values("Repayment %", ascending=False)
+# Ensure "Zidisha" row is always at the bottom
+_z = table_day[table_day["Branch Name"].astype(str).str.strip().str.lower() == "zidisha"]
+_o = table_day[table_day["Branch Name"].astype(str).str.strip().str.lower() != "zidisha"]
+table_day = pd.concat([_o, _z], ignore_index=True)
 
 # Display as a table with formatted columns
 st.dataframe(
