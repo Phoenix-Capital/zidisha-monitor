@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Phoenix Capital • Loan Performance Dashboard",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -131,47 +131,23 @@ def pct_fmt(value: float) -> str:
 # -------------------------------------------------------------
 # Sidebar: Data source selection & Filters
 # -------------------------------------------------------------
-st.sidebar.title("Data Source")
-
 default_files = find_excel_files(".")
-selected_file = st.sidebar.selectbox(
-    "Select dataset file",
-    options=default_files,
-    index=default_files.index(default_files[-1]) if default_files else 0,
-    placeholder="Choose an Excel file",
-)
-
-uploaded = st.sidebar.file_uploader("...or upload an Excel file", type=["xlsx", "xls"])
-
-data_file_to_use = selected_file
-if uploaded is not None:
-    data_file_to_use = uploaded
-
+data_file_to_use = default_files[-1] if default_files else None
 if not data_file_to_use:
-    st.error("No Excel file found. Please place the dataset in this folder or upload it from the sidebar.")
+    st.error("No Excel file found in the working directory.")
     st.stop()
-
 with st.spinner("Loading dataset..."):
     df = load_dataset(data_file_to_use)
 
 
-st.sidebar.title("Filters")
-
-# Date range filter
+# Defaults: use all data, all branches, all officers (no sidebar UI)
 min_date = pd.to_datetime(df["Disbursed On Date"]).min()
 max_date = pd.to_datetime(df["Disbursed On Date"]).max()
-
-date_range: Tuple[pd.Timestamp, pd.Timestamp] = st.sidebar.date_input(
-    "Disbursement date range",
-    value=(min_date.to_pydatetime() if pd.notna(min_date) else None,
-           max_date.to_pydatetime() if pd.notna(max_date) else None),
-)
-
+date_range: Tuple[pd.Timestamp, pd.Timestamp] = (min_date, max_date)
 branches = sorted([b for b in df["Branch Name"].dropna().unique()])
 officers = sorted([o for o in df["Loan Officer Name"].dropna().unique()])
-
-selected_branches = st.sidebar.multiselect("Branch(es)", options=branches, default=branches)
-selected_officers = st.sidebar.multiselect("Loan Officer(s)", options=officers, default=officers)
+selected_branches = branches
+selected_officers = officers
 
 
 # Apply filters
@@ -203,16 +179,9 @@ mask_period = (
 )
 period_df = filtered.loc[mask_period].copy()
 
-## Sidebar control: day performance date (default to computed same-day-last-month)
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Day Performance Date")
+## Default day performance date (no sidebar UI)
 _default_day = end_window.to_pydatetime()
-st.sidebar.date_input(
-    "Select day (default: same day last month)",
-    value=_default_day,
-    key="day_perf_date",
-)
-_sidebar_val = st.session_state.get("day_perf_date", _default_day)
+_sidebar_val = _default_day
 
 
 # -------------------------------------------------------------
@@ -444,18 +413,8 @@ st.plotly_chart(fig_same_period, use_container_width=True)
 
 # Day performance by branch: Repaid vs Expected (selectable date)
 st.markdown("#### Day Performance — selected date")
-st.date_input(
-    "Change day here (or via sidebar)",
-    value=st.session_state.get("day_perf_date", _default_day),
-    key="day_perf_date_inline",
-    help="Defaults to the same day last month; adjust as needed.",
-)
-# Determine effective date without mutating existing widget state
-_inline_val = st.session_state.get("day_perf_date_inline")
-if _inline_val is not None:
-    day_date = pd.to_datetime(_inline_val).normalize()
-else:
-    day_date = pd.to_datetime(_sidebar_val).normalize()
+# Inline date input removed per request; always use default computed date
+day_date = pd.to_datetime(_sidebar_val).normalize()
 day_df = (
     period_df.assign(Date=period_df["Disbursed On Date"].dt.floor("D"))
     .query("Date == @day_date")
