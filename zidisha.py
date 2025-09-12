@@ -509,6 +509,39 @@ st.dataframe(
     use_container_width=True,
 )
 
+## Officer day performance table (selected date)
+st.markdown("#### Day Performance — Officers (selected date)")
+
+# Ensure all currently selected officers appear (with zeros if no activity on that day)
+all_officers = sorted(period_df["Loan Officer Name"].dropna().unique().tolist())
+officer_baseline = pd.DataFrame({
+    "Loan Officer Name": all_officers,
+})
+
+officer_day = (
+    day_df.groupby("Loan Officer Name", dropna=True)[["Total Repayment", "Total Expected Repayment"]]
+    .sum()
+    .reset_index()
+)
+officer_day = officer_baseline.merge(officer_day, on="Loan Officer Name", how="left").fillna(0)
+
+table_officer_day = officer_day.copy()
+table_officer_day["Repayment %"] = np.where(
+    table_officer_day["Total Expected Repayment"] > 0,
+    table_officer_day["Total Repayment"] / table_officer_day["Total Expected Repayment"],
+    np.nan,
+)
+table_officer_day = table_officer_day.sort_values("Repayment %", ascending=False)
+
+st.dataframe(
+    table_officer_day.rename(columns={"Loan Officer Name": "Officer"}).assign(**{
+        "Total Expected Repayment": table_officer_day["Total Expected Repayment"].map(lambda v: f"{v:,.0f}"),
+        "Total Repayment": table_officer_day["Total Repayment"].map(lambda v: f"{v:,.0f}"),
+        "Repayment %": table_officer_day["Repayment %"].map(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-"),
+    }),
+    use_container_width=True,
+)
+
 st.markdown("### 3) Loan Officer Performance")
 
 officer_counts = (
