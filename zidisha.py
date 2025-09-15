@@ -230,6 +230,21 @@ total_outstanding = period_df["Total Outstanding"].sum()
 total_expected = period_df["Total Expected Repayment"].sum()
 overall_repayment_rate = (total_amount_repaid / total_expected) if total_expected and not pd.isna(total_expected) and total_expected != 0 else np.nan
 
+# Previous month full-month metrics (loans issued in that month)
+prev_month_mask = (
+    (filtered["Disbursed On Date"] >= first_prev_month) &
+    (filtered["Disbursed On Date"] <= last_prev_month)
+)
+prev_month_df = filtered.loc[prev_month_mask].copy()
+
+pm_total_disbursed = prev_month_df["Principal Amount"].sum()
+pm_total_repaid = prev_month_df["Total Repayment"].sum()
+pm_total_outstanding = prev_month_df["Total Outstanding"].sum()
+pm_total_expected = prev_month_df["Total Expected Repayment"].sum()
+pm_repayment_rate = (pm_total_repaid / pm_total_expected) if pm_total_expected and not pd.isna(pm_total_expected) and pm_total_expected != 0 else np.nan
+
+pm_label = last_prev_month.strftime("%b %Y")
+
 # Best Branch and Officer by repayment performance ratio
 branch_perf = (
     period_df.groupby("Branch Name", dropna=True)[["Total Repayment", "Total Outstanding"]]
@@ -267,6 +282,32 @@ with kpi_cols[3]:
     st.metric("Total Expected Repayment", kpi_value_fmt(total_expected))
 with kpi_cols[4]:
     st.metric("Repayment Rate (All Branches)", pct_fmt(overall_repayment_rate))
+
+# Previous month (full month) KPI cards — loans issued in that month
+st.caption(f"Previous month end-of-month snapshot for loans disbursed in {pm_label}")
+pm_cols = st.columns(5)
+with pm_cols[0]:
+    st.metric(f"{pm_label} — Total Disbursed", kpi_value_fmt(pm_total_disbursed))
+with pm_cols[1]:
+    st.metric(f"{pm_label} — Total Repaid", kpi_value_fmt(pm_total_repaid))
+with pm_cols[2]:
+    st.metric(f"{pm_label} — Total Outstanding", kpi_value_fmt(pm_total_outstanding))
+with pm_cols[3]:
+    st.metric(f"{pm_label} — Total Expected", kpi_value_fmt(pm_total_expected))
+with pm_cols[4]:
+    st.metric(f"{pm_label} — Repayment Rate", pct_fmt(pm_repayment_rate))
+
+# Current month disbursed (to-date)
+cm_mask = (
+    (filtered["Disbursed On Date"] >= first_this_month) &
+    (filtered["Disbursed On Date"] <= today)
+)
+cm_df = filtered.loc[cm_mask]
+cm_disbursed = cm_df["Principal Amount"].sum()
+cm_label = today.strftime("%b %Y")
+cm_col = st.columns(1)[0]
+with cm_col:
+    st.metric(f"{cm_label} — Disbursed (to-date)", kpi_value_fmt(cm_disbursed))
 
 
 # -------------------------------------------------------------
