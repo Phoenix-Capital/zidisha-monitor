@@ -309,49 +309,6 @@ cm_col = st.columns(1)[0]
 with cm_col:
     st.metric(f"{cm_label} — Disbursed (to-date)", kpi_value_fmt(cm_disbursed))
 
-## Previous month 1st–15th defaulted amounts (branch-wise)
-pm_first = first_prev_month
-pm_mid = first_prev_month.replace(day=min(15, last_prev_month.day))
-_pm_first_half_mask = (
-    (filtered["Disbursed On Date"] >= pm_first) &
-    (filtered["Disbursed On Date"] <= pm_mid)
-)
-pm_first_half = filtered.loc[_pm_first_half_mask].copy()
-
-default_table = (
-    pm_first_half.groupby("Branch Name", dropna=True)[
-        ["Total Outstanding", "Total Expected Repayment", "Total Repayment"]
-    ]
-    .sum()
-    .reset_index()
-)
-
-if not default_table.empty:
-    default_table = default_table.assign(
-        DefaultPct=lambda x: np.where(
-            x["Total Expected Repayment"] > 0,
-            x["Total Outstanding"] / x["Total Expected Repayment"],
-            np.nan,
-        )
-    ).sort_values("DefaultPct", ascending=False)
-
-    st.markdown(f"#### September 2025 (1–15) — Defaulted Amounts by Branch")
-    st.dataframe(
-        default_table.rename(columns={
-            "Branch Name": "Branch",
-            "Total Outstanding": "Defaulted Amount",
-            "Total Expected Repayment": "Expected",
-            "Total Repayment": "Repaid",
-            "DefaultPct": "Default %",
-        }).assign(**{
-            "Defaulted Amount": default_table["Total Outstanding"].map(lambda v: f"{v:,.0f}"),
-            "Expected": default_table["Total Expected Repayment"].map(lambda v: f"{v:,.0f}"),
-            "Repaid": default_table["Total Repayment"].map(lambda v: f"{v:,.0f}"),
-            "Default %": default_table["DefaultPct"].map(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-"),
-        }),
-        use_container_width=True,
-    )
-
 ## (Removed month cohorts comparison table)
 
 
