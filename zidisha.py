@@ -335,7 +335,7 @@ if not default_table.empty:
         )
     ).sort_values("DefaultPct", ascending=False)
 
-    st.markdown(f"#### {pm_label} (1–15) — Defaulted Amounts by Branch")
+    st.markdown(f"#### September 2025 (1–15) — Defaulted Amounts by Branch")
     st.dataframe(
         default_table.rename(columns={
             "Branch Name": "Branch",
