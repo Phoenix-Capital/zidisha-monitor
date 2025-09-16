@@ -383,7 +383,7 @@ with col2:
 
 # Card grid for branch repayment percentage
 if not branch_expected.empty:
-    st.markdown("#### Branch repayment rate (Repaid / Expected)")
+    st.markdown("#### Branch repayment rate (MTDS)")
     num_cols = 6
     rows = int(np.ceil(len(branch_expected) / num_cols))
     idx = 0
@@ -419,7 +419,7 @@ if not branch_expected.empty:
     )
 
     if not _pm_branch.empty:
-        st.markdown(f"#### Branch repayment rate (Repaid / Expected) — {pm_label} cohort")
+        st.markdown(f"#### Branch repayment rate (EOM)")
         _num_cols = 6
         _rows = int(np.ceil(len(_pm_branch) / _num_cols))
         _idx = 0
