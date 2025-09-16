@@ -309,6 +309,8 @@ cm_col = st.columns(1)[0]
 with cm_col:
     st.metric(f"{cm_label} — Disbursed (to-date)", kpi_value_fmt(cm_disbursed))
 
+## (Removed month cohorts comparison table)
+
 
 # -------------------------------------------------------------
 # 1) Branch Performance Overview
@@ -397,6 +399,42 @@ if not branch_expected.empty:
                 help=f"Repaid: {row['Total Repayment']:,.0f} / Expected: {row['Total Expected Repayment']:,.0f}"
             )
             idx += 1
+
+    # Add previous month cohort cards below
+    _pm_branch_full = (
+        prev_month_df.groupby("Branch Name", dropna=True)[["Total Repayment", "Total Expected Repayment"]]
+        .sum()
+    )
+    _pm_branch = (
+        _pm_branch_full
+        .assign(
+            RepaymentPct=lambda x: np.where(
+                x["Total Expected Repayment"] > 0,
+                x["Total Repayment"] / x["Total Expected Repayment"],
+                np.nan,
+            )
+        )
+        .reset_index()
+        .sort_values("RepaymentPct", ascending=False)
+    )
+
+    if not _pm_branch.empty:
+        st.markdown(f"#### Branch repayment rate (Repaid / Expected) — {pm_label} cohort")
+        _num_cols = 6
+        _rows = int(np.ceil(len(_pm_branch) / _num_cols))
+        _idx = 0
+        for _ in range(_rows):
+            _cols = st.columns(_num_cols)
+            for _c in _cols:
+                if _idx >= len(_pm_branch):
+                    break
+                _row = _pm_branch.iloc[_idx]
+                _c.metric(
+                    label=str(_row["Branch Name"]),
+                    value=f"{(_row['RepaymentPct']*100):.1f}%" if pd.notna(_row["RepaymentPct"]) else "-",
+                    help=f"Repaid: {_pm_branch_full.loc[_row['Branch Name'], 'Total Repayment']:,.0f} / Expected: {_pm_branch_full.loc[_row['Branch Name'], 'Total Expected Repayment']:,.0f}"
+                )
+                _idx += 1
 
 
 # -------------------------------------------------------------
