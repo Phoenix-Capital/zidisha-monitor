@@ -739,7 +739,6 @@ if _rate_file_to_use is not None:
         _computed = _computed.merge(_current_repaid, left_on="Branch", right_index=True, how="left")
         _computed["Current Repaid"] = _computed["Current Repaid"].fillna(0.0)
         _computed["Defaulted Amount Collected (Today)"] = (_computed["Current Repaid"] - _computed["Repaid as of 15th"]).clip(lower=0)
-        _computed = _computed.drop(columns=["Current Repaid"])  # clean up
     except Exception as e:
         st.warning(f"Could not compute collections from rate file: {e}")
 else:
@@ -763,6 +762,7 @@ st.dataframe(
         "Defaulted Amount as of 15th": _computed["Defaulted Amount as of 15th"].map(lambda v: f"{v:,.0f}"),
         "Expected (1-15th)": _computed["Expected (1-15th)"].map(lambda v: f"{v:,.0f}"),
         "Repaid as of 15th": _computed["Repaid as of 15th"].map(lambda v: f"{v:,.0f}"),
+        "Current Repaid": _computed.get("Current Repaid", pd.Series(dtype=float)).map(lambda v: f"{v:,.0f}"),
         "Defaulted Amount Collected (Today)": _computed["Defaulted Amount Collected (Today)"].map(lambda v: f"{v:,.0f}"),
         "Reward (3%)": _computed["Reward (3%)"].map(lambda v: f"{v:,.0f}"),
     }),
