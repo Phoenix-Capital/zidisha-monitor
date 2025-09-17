@@ -694,3 +694,80 @@ st.caption(
 )
 
 
+# -------------------------------------------------------------
+# 5) Defaulted Amounts (Aug 1–15) and Today's Collections
+# -------------------------------------------------------------
+st.markdown("### 5) Defaulted Amounts (Aug 1–15) and Today's Collections")
+
+# Static reference table as provided
+_defaulted_records = [
+    {"Branch": "Utawala Branch", "Defaulted Amount as of 15th": 399_189, "Expected (1-15th)": 2_080_499, "Repaid as of 15th": 1_681_310},
+    {"Branch": "Kiambu Branch", "Defaulted Amount as of 15th": 239_026, "Expected (1-15th)": 1_320_302, "Repaid as of 15th": 1_080_904},
+    {"Branch": "Kasarani Branch", "Defaulted Amount as of 15th": 229_898, "Expected (1-15th)": 1_687_653, "Repaid as of 15th": 1_457_755},
+    {"Branch": "Kawangware Branch", "Defaulted Amount as of 15th": 149_258, "Expected (1-15th)": 1_291_555, "Repaid as of 15th": 1_142_297},
+    {"Branch": "Pipeline Branch", "Defaulted Amount as of 15th": 250_784, "Expected (1-15th)": 2_330_446, "Repaid as of 15th": 2_079_662},
+    {"Branch": "Adams Branch", "Defaulted Amount as of 15th": 207_662, "Expected (1-15th)": 1_962_222, "Repaid as of 15th": 1_753_455},
+]
+
+_df_defaulted = pd.DataFrame(_defaulted_records)
+
+# Compute "Defaulted Amount Collected (Today)" from the Rate_*.xlsx file
+_rate_files = [p for p in find_excel_files(".") if os.path.basename(p).lower().startswith("rate_")]
+_rate_file_to_use = sorted(_rate_files)[-1] if _rate_files else None
+
+_computed = _df_defaulted.copy()
+_computed["Defaulted Amount Collected (Today)"] = 0.0
+
+if _rate_file_to_use is not None:
+    try:
+        _df_rate = load_dataset(_rate_file_to_use)
+        # Infer year from the dataset's latest disbursement date
+        _latest_date = pd.to_datetime(_df_rate["Disbursed On Date"]).max()
+        if pd.isna(_latest_date):
+            raise ValueError("No valid dates in rate file")
+        _year = int(_latest_date.year)
+        _start_aug = pd.Timestamp(_year, 8, 1)
+        _end_aug15 = pd.Timestamp(_year, 8, 15)
+        _cohort = _df_rate[(pd.to_datetime(_df_rate["Disbursed On Date"]) >= _start_aug) & (pd.to_datetime(_df_rate["Disbursed On Date"]) <= _end_aug15)].copy()
+
+        # Current total repayment for Aug 1–15 cohort by branch (all-time to date in file)
+        _current_repaid = (
+            _cohort.groupby("Branch Name", dropna=True)["Total Repayment"].sum().rename("Current Repaid")
+        )
+
+        # Map per branch: current repaid minus static repaid as of 15th
+        _computed = _computed.merge(_current_repaid, left_on="Branch", right_index=True, how="left")
+        _computed["Current Repaid"] = _computed["Current Repaid"].fillna(0.0)
+        _computed["Defaulted Amount Collected (Today)"] = (_computed["Current Repaid"] - _computed["Repaid as of 15th"]).clip(lower=0)
+        _computed = _computed.drop(columns=["Current Repaid"])  # clean up
+    except Exception as e:
+        st.warning(f"Could not compute collections from rate file: {e}")
+else:
+    st.info("Rate file not found (expected a file like 'Rate_*.xlsx'). Using zeros for today's collections.")
+
+# Compute reward at 3% of the defaulted amount collected today
+_computed["Reward (3%)"] = _computed["Defaulted Amount Collected (Today)"] * 0.03
+
+_tot_collected_today = float(_computed["Defaulted Amount Collected (Today)"].sum())
+_tot_reward = _tot_collected_today * 0.03
+
+_m1, _m2 = st.columns(2)
+with _m1:
+    st.metric("Total Defaulted Amount Collected (Today)", kpi_value_fmt(_tot_collected_today))
+with _m2:
+    st.metric("Total Reward (3%)", kpi_value_fmt(_tot_reward))
+
+# Present a formatted read-only view including the computed reward
+st.dataframe(
+    _computed.assign(**{
+        "Defaulted Amount as of 15th": _computed["Defaulted Amount as of 15th"].map(lambda v: f"{v:,.0f}"),
+        "Expected (1-15th)": _computed["Expected (1-15th)"].map(lambda v: f"{v:,.0f}"),
+        "Repaid as of 15th": _computed["Repaid as of 15th"].map(lambda v: f"{v:,.0f}"),
+        "Defaulted Amount Collected (Today)": _computed["Defaulted Amount Collected (Today)"].map(lambda v: f"{v:,.0f}"),
+        "Reward (3%)": _computed["Reward (3%)"].map(lambda v: f"{v:,.0f}"),
+    }),
+    use_container_width=True,
+)
+
+st.caption("Computed as: Current total repaid for Aug 1–15 cohort (from rate file) minus 'Repaid as of 15th'. Reward = 3% of the computed collection.")
+
