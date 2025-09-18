@@ -345,7 +345,19 @@ if not cm_branch.empty:
             label = str(row.get("Branch Name", ""))
             value = kpi_value_fmt(float(row.get("Principal Amount", 0.0)))
             help_txt = f"Loans: {int(row.get('Loan ID', 0))}"
-            c.metric(label=label, value=value, help=help_txt)
+            if row.get("_overall"):
+                c.markdown(
+                    f"""
+<div style="background:#FF7E09; color:white; padding:0.75rem 0.5rem; border-radius:6px; text-align:center;">
+  <div style="font-size:0.9rem; font-weight:600;">{label}</div>
+  <div style="font-size:1.4rem; font-weight:700;">{value}</div>
+  <div style="font-size:0.8rem; opacity:0.95;">{help_txt}</div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+            else:
+                c.metric(label=label, value=value, help=help_txt)
 
 ## (Removed month cohorts comparison table)
 
