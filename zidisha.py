@@ -314,31 +314,38 @@ cm_branch = (
 
 st.markdown(f"#### {cm_label} — Disbursed (to-date) by Branch")
 if not cm_branch.empty:
-    num_cols = 6
-    rows = int(np.ceil(len(cm_branch) / num_cols))
+    num_cols = 7
+    # Build rendering list and ensure "Overall" lands as the last (rightmost) card
+    render_rows = cm_branch.to_dict(orient="records")
+    overall_disbursed = float(cm_df["Principal Amount"].sum())
+    overall_loans = int(cm_df["Loan ID"].nunique()) if "Loan ID" in cm_df.columns else 0
+    total_with_overall = len(render_rows) + 1
+    pad_count = (num_cols - (total_with_overall % num_cols)) % num_cols
+    if pad_count:
+        render_rows.extend([{"_spacer": True} for _ in range(pad_count)])
+    render_rows.append({
+        "Branch Name": "Overall",
+        "Principal Amount": overall_disbursed,
+        "Loan ID": overall_loans,
+        "_overall": True,
+    })
+
+    rows = int(np.ceil(len(render_rows) / num_cols))
     idx = 0
     for _ in range(rows):
         cols = st.columns(num_cols)
         for c in cols:
-            if idx >= len(cm_branch):
+            if idx >= len(render_rows):
                 break
-            row = cm_branch.iloc[idx]
-            c.metric(
-                label=str(row["Branch Name"]),
-                value=kpi_value_fmt(float(row["Principal Amount"])),
-                help=f"Loans: {int(row['Loan ID'])}"
-            )
+            row = render_rows[idx]
             idx += 1
-    # Final row: overall total on the far right
-    overall_disbursed = float(cm_df["Principal Amount"].sum())
-    overall_loans = int(cm_df["Loan ID"].nunique()) if "Loan ID" in cm_df.columns else 0
-    end_cols = st.columns(num_cols)
-    with end_cols[-1]:
-        st.metric(
-            label="Overall",
-            value=kpi_value_fmt(overall_disbursed),
-            help=f"Loans: {overall_loans}"
-        )
+            if row.get("_spacer"):
+                c.write("")
+                continue
+            label = str(row.get("Branch Name", ""))
+            value = kpi_value_fmt(float(row.get("Principal Amount", 0.0)))
+            help_txt = f"Loans: {int(row.get('Loan ID', 0))}"
+            c.metric(label=label, value=value, help=help_txt)
 
 ## (Removed month cohorts comparison table)
 
