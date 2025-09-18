@@ -297,17 +297,38 @@ with pm_cols[3]:
 with pm_cols[4]:
     st.metric(f"{pm_label} — Repayment Rate", pct_fmt(pm_repayment_rate))
 
-# Current month disbursed (to-date)
+## Current month disbursed (to-date) — per-branch cards
 cm_mask = (
     (filtered["Disbursed On Date"] >= first_this_month) &
     (filtered["Disbursed On Date"] <= today)
 )
 cm_df = filtered.loc[cm_mask]
-cm_disbursed = cm_df["Principal Amount"].sum()
 cm_label = today.strftime("%b %Y")
-cm_col = st.columns(1)[0]
-with cm_col:
-    st.metric(f"{cm_label} — Disbursed (to-date)", kpi_value_fmt(cm_disbursed))
+
+cm_branch = (
+    cm_df.groupby("Branch Name", dropna=True)
+    .agg({"Principal Amount": "sum", "Loan ID": "nunique"})
+    .reset_index()
+    .sort_values("Principal Amount", ascending=False)
+)
+
+st.markdown(f"#### {cm_label} — Disbursed (to-date) by Branch")
+if not cm_branch.empty:
+    num_cols = 6
+    rows = int(np.ceil(len(cm_branch) / num_cols))
+    idx = 0
+    for _ in range(rows):
+        cols = st.columns(num_cols)
+        for c in cols:
+            if idx >= len(cm_branch):
+                break
+            row = cm_branch.iloc[idx]
+            c.metric(
+                label=str(row["Branch Name"]),
+                value=kpi_value_fmt(float(row["Principal Amount"])),
+                help=f"Loans: {int(row['Loan ID'])}"
+            )
+            idx += 1
 
 ## (Removed month cohorts comparison table)
 
