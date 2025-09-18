@@ -329,6 +329,16 @@ if not cm_branch.empty:
                 help=f"Loans: {int(row['Loan ID'])}"
             )
             idx += 1
+    # Final row: overall total on the far right
+    overall_disbursed = float(cm_df["Principal Amount"].sum())
+    overall_loans = int(cm_df["Loan ID"].nunique()) if "Loan ID" in cm_df.columns else 0
+    end_cols = st.columns(num_cols)
+    with end_cols[-1]:
+        st.metric(
+            label="Overall",
+            value=kpi_value_fmt(overall_disbursed),
+            help=f"Loans: {overall_loans}"
+        )
 
 ## (Removed month cohorts comparison table)
 
