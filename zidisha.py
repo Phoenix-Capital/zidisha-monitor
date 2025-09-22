@@ -211,6 +211,8 @@ st.sidebar.date_input(
     "Select day (default: same day last month)",
     value=_default_day,
     key="day_perf_date",
+    min_value=min_date.to_pydatetime() if pd.notna(min_date) else None,
+    max_value=max_date.to_pydatetime() if pd.notna(max_date) else None,
 )
 _sidebar_val = st.session_state.get("day_perf_date", _default_day)
 
@@ -577,7 +579,9 @@ st.date_input(
     "Change day here (or via sidebar)",
     value=st.session_state.get("day_perf_date", _default_day),
     key="day_perf_date_inline",
-    help="Defaults to the same day last month; adjust as needed.",
+    help="Defaults to the same day last month; select any date within available data.",
+    min_value=min_date.to_pydatetime() if pd.notna(min_date) else None,
+    max_value=max_date.to_pydatetime() if pd.notna(max_date) else None,
 )
 # Determine effective date without mutating existing widget state
 _inline_val = st.session_state.get("day_perf_date_inline")
@@ -585,13 +589,11 @@ if _inline_val is not None:
     day_date = pd.to_datetime(_inline_val).normalize()
 else:
     day_date = pd.to_datetime(_sidebar_val).normalize()
-day_df = (
-    period_df.assign(Date=period_df["Disbursed On Date"].dt.floor("D"))
-    .query("Date == @day_date")
-)
+_base_day_df = filtered.assign(Date=filtered["Disbursed On Date"].dt.floor("D"))
+day_df = _base_day_df.query("Date == @day_date")
 
 # Ensure all currently selected branches appear (with zeros if no activity on that day)
-all_branches = sorted(period_df["Branch Name"].dropna().unique().tolist())
+all_branches = sorted(filtered["Branch Name"].dropna().unique().tolist())
 baseline = pd.DataFrame({
     "Branch Name": all_branches,
 })
@@ -903,46 +905,4 @@ st.dataframe(
 )
 
 
-# -------------------------------------------------------------
-# 7) Previous Same Weekday — Expected vs Repaid by Branch (Daily)
-# -------------------------------------------------------------
-_today = pd.Timestamp.today().normalize()
-_prev_same_weekday = _today - pd.Timedelta(days=7)
-_dow_label = _today.strftime('%A')
 
-# Build a daily DataFrame and select previous same weekday
-_daily_df = filtered.copy()
-_daily_df["__date"] = pd.to_datetime(_daily_df["Disbursed On Date"]).dt.floor("D")
-_day_prev_df = _daily_df[_daily_df["__date"] == _prev_same_weekday]
-
-st.markdown(f"### 7) Previous {_dow_label} — Expected vs Repaid by Branch")
-st.caption(f"Comparing branches for the previous {_dow_label}: {_prev_same_weekday.strftime('%d %b %Y')}")
-
-if _day_prev_df.empty:
-    st.info("No records for the previous same weekday given current filters.")
-else:
-    _by_branch_prev = (
-        _day_prev_df
-        .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
-        .sum()
-        .reset_index()
-        .rename(columns={
-            "Total Expected Repayment": "Total Expected Repayment (Prev)",
-            "Total Repayment": "Total Repayment (Prev)",
-        })
-    )
-    _by_branch_prev["Repayment % (Prev)"] = np.where(
-        _by_branch_prev["Total Expected Repayment (Prev)"] > 0,
-        _by_branch_prev["Total Repayment (Prev)"] / _by_branch_prev["Total Expected Repayment (Prev)"],
-        np.nan,
-    )
-    _by_branch_prev = _by_branch_prev.sort_values("Repayment % (Prev)", ascending=False)
-
-    st.dataframe(
-        _by_branch_prev.assign(**{
-            "Total Expected Repayment (Prev)": _by_branch_prev["Total Expected Repayment (Prev)"].map(lambda v: f"{float(v):,.0f}"),
-            "Total Repayment (Prev)": _by_branch_prev["Total Repayment (Prev)"].map(lambda v: f"{float(v):,.0f}"),
-            "Repayment % (Prev)": _by_branch_prev["Repayment % (Prev)"].map(lambda v: f"{(v*100):.1f}%" if pd.notna(v) else "-"),
-        }),
-        use_container_width=True,
-    )
