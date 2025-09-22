@@ -745,70 +745,204 @@ st.caption(
 
 
 # -------------------------------------------------------------
-# 5) Defaulted Amounts (1-21st) and Today's Collections
+# 5) Derived Repayments (Aug 1–21) with Defaulted Amounts
 # -------------------------------------------------------------
-st.markdown("### 5) Defaulted Amounts (1-21st) and Today's Collections")
+st.markdown("### 5) Derived Repayments (Aug 1–21)")
 
-# Static reference table as provided
-_defaulted_records = [
-    {"Branch": "Utawala Branch", "Defaulted Amount as of 21st": 399_189, "Expected (1-21st)": 2_080_499, "Repaid as of 21st": 1_681_310},
-    {"Branch": "Kiambu Branch", "Defaulted Amount as of 21st": 239_026, "Expected (1-21st)": 1_320_302, "Repaid as of 21st": 1_080_904},
-    {"Branch": "Kasarani Branch", "Defaulted Amount as of 21st": 229_898, "Expected (1-21st)": 1_687_653, "Repaid as of 21st": 1_457_755},
-    {"Branch": "Kawangware Branch", "Defaulted Amount as of 21st": 149_258, "Expected (1-21st)": 1_291_555, "Repaid as of 21st": 1_142_297},
-    {"Branch": "Pipeline Branch", "Defaulted Amount as of 21st": 250_784, "Expected (1-21st)": 2_330_446, "Repaid as of 21st": 2_079_662},
-    {"Branch": "Adams Branch", "Defaulted Amount as of 21st": 207_662, "Expected (1-21st)": 1_962_222, "Repaid as of 21st": 1_753_455},
-]
-
-_df_defaulted = pd.DataFrame(_defaulted_records)
-
-# Compute "Defaulted Amount Collected (Today)" from the Rate_*.xlsx file
-_rate_files = [p for p in find_excel_files(".") if os.path.basename(p).lower().startswith("rate_")]
-_rate_file_to_use = sorted(_rate_files)[-1] if _rate_files else None
-
-_computed = _df_defaulted.copy()
-_computed["Defaulted Amount Collected (Today)"] = 0.0
-
-if _rate_file_to_use is not None:
-    try:
-        _df_rate = load_dataset(_rate_file_to_use)
-        # Infer year from the dataset's latest disbursement date
-        _latest_date = pd.to_datetime(_df_rate["Disbursed On Date"]).max()
-        if pd.isna(_latest_date):
-            raise ValueError("No valid dates in rate file")
-        _year = int(_latest_date.year)
-        _start_period = pd.Timestamp(_year, 1, 1)
-        _end_period = pd.Timestamp(_year, 1, 21)
-        _cohort = _df_rate[(pd.to_datetime(_df_rate["Disbursed On Date"]) >= _start_period) & (pd.to_datetime(_df_rate["Disbursed On Date"]) <= _end_period)].copy()
-
-        # Current total repayment for 1-21st cohort by branch (all-time to date in file)
-        _current_repaid = (
-            _cohort.groupby("Branch Name", dropna=True)["Total Repayment"].sum().rename("Current Repaid")
-        )
-
-        # Map per branch: current repaid minus static repaid as of 21st
-        _computed = _computed.merge(_current_repaid, left_on="Branch", right_index=True, how="left")
-        _computed["Current Repaid"] = _computed["Current Repaid"].fillna(0.0)
-        _computed["Defaulted Amount Collected (Today)"] = (_computed["Current Repaid"] - _computed["Repaid as of 21st"]).clip(lower=0)
-    except Exception as e:
-        st.warning(f"Could not compute collections from rate file: {e}")
+_max_d = pd.to_datetime(filtered["Disbursed On Date"]).max()
+if pd.isna(_max_d):
+    st.info("No data available to compute Aug 1–21 derived repayments.")
 else:
-    st.info("Rate file not found (expected a file like 'Rate_*.xlsx'). Using zeros for today's collections.")
+    _yr = int(_max_d.year)
+    _aug_start = pd.Timestamp(_yr, 8, 1)
+    _aug_end = pd.Timestamp(_yr, 8, 21)
+    _aug_mask = (
+        (pd.to_datetime(filtered["Disbursed On Date"]) >= _aug_start) &
+        (pd.to_datetime(filtered["Disbursed On Date"]) <= _aug_end)
+    )
+    _aug_df = filtered.loc[_aug_mask].copy()
 
-_tot_collected_today = float(_computed["Defaulted Amount Collected (Today)"].sum())
+    # Aggregate derived totals by branch for the window
+    _derived_tbl = (
+        _aug_df
+        .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+        .sum()
+        .reset_index()
+        .rename(columns={
+            "Total Expected Repayment": "Total Expected Repayment Derived",
+            "Total Repayment": "Total Repayment Derived",
+        })
+    )
 
-st.metric("Total Defaulted Amount Collected (Today)", kpi_value_fmt(_tot_collected_today))
+    # Provided defaulted amounts as of 21st (static)
+    _defaulted_records = [
+        {"Branch": "Utawala Branch", "Defaulted Amount as of 21st": 467_138},
+        {"Branch": "Pipeline Branch", "Defaulted Amount as of 21st": 404_285},
+        {"Branch": "Kasarani Branch", "Defaulted Amount as of 21st": 304_311},
+        {"Branch": "Kiambu Branch", "Defaulted Amount as of 21st": 302_653},
+        {"Branch": "Adams Branch", "Defaulted Amount as of 21st": 212_063},
+        {"Branch": "Kawangware Branch", "Defaulted Amount as of 21st": 202_513},
+    ]
+    _defaulted_df = pd.DataFrame(_defaulted_records)
 
-# Present a formatted read-only view
+    # Build final table starting from the defaulted list to ensure only the specified branches appear
+    _final_tbl = (
+        _defaulted_df
+        .merge(_derived_tbl, left_on="Branch", right_on="Branch Name", how="left")
+        .drop(columns=["Branch Name"], errors="ignore")
+        .fillna(0)
+        .sort_values("Defaulted Amount as of 21st", ascending=False)
+    )
+
+    # Compute Defaults Repayed = Defaulted - (Expected Derived - Repayment Derived)
+    _expected_minus_repaid = (
+        _final_tbl["Total Expected Repayment Derived"].astype(float)
+        - _final_tbl["Total Repayment Derived"].astype(float)
+    )
+    _raw_defaults_repayed = (
+        _final_tbl["Defaulted Amount as of 21st"].astype(float) - _expected_minus_repaid
+    )
+    # Cap between 0 and Defaulted Amount
+    _final_tbl["Defaults Repayed"] = np.minimum(
+        np.maximum(_raw_defaults_repayed, 0.0),
+        _final_tbl["Defaulted Amount as of 21st"].astype(float),
+    )
+
+    st.dataframe(
+        _final_tbl.assign(**{
+            "Defaulted Amount as of 21st": _final_tbl["Defaulted Amount as of 21st"].map(lambda v: f"{float(v):,.0f}"),
+            "Total Expected Repayment Derived": _final_tbl["Total Expected Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+            "Total Repayment Derived": _final_tbl["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+            "Defaults Repayed": _final_tbl["Defaults Repayed"].map(lambda v: f"{float(v):,.0f}"),
+        })[[
+            "Branch",
+            "Defaulted Amount as of 21st",
+            "Defaults Repayed",
+            "Total Expected Repayment Derived",
+            "Total Repayment Derived",
+        ]],
+        use_container_width=True,
+    )
+
+
+# -------------------------------------------------------------
+# 6) New Clients — Zidisha Simba (Current Month)
+# -------------------------------------------------------------
+st.markdown("### 6) New Clients — Zidisha Simba (Current Month)")
+
+# Detect product column
+_product_aliases = ["Product Name", "Product", "Loan Product"]
+
+def _normalize_name(n: str) -> str:
+    s = str(n).strip().lower()
+    s = " ".join(s.replace("_", " ").split())
+    return s
+
+_normalized_to_actual = { _normalize_name(c): c for c in df.columns }
+_product_col = None
+for _cand in _product_aliases:
+    _norm_cand = _normalize_name(_cand)
+    if _norm_cand in _normalized_to_actual:
+        _product_col = _normalized_to_actual[_norm_cand]
+        break
+
+if _product_col is None:
+    st.info("Product column not found. Expected one of: Product Name, Product, Loan Product.")
+elif "Loan Officer Name" not in df.columns:
+    st.info("Column 'Loan Officer Name' not found in dataset.")
+else:
+    _cm_mask_nc = (
+        (filtered["Disbursed On Date"] >= first_this_month) &
+        (filtered["Disbursed On Date"] <= today)
+    )
+    _cm_df_nc = filtered.loc[_cm_mask_nc].copy()
+    # Baseline: all officers present this month (any product)
+    _officers_all = (
+        _cm_df_nc.groupby("Loan Officer Name", dropna=True)["Loan ID"].nunique().reset_index().drop(columns=["Loan ID"]).rename(columns={"Loan Officer Name": "Officer"})
+    )
+    # Filter to product == Zidisha Simba (normalized)
+    _cm_df_nc["__prod_norm"] = (
+        _cm_df_nc[_product_col]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace("_", " ")
+        .str.replace("\s+", " ", regex=True)
+    )
+    _simba = _cm_df_nc[_cm_df_nc["__prod_norm"] == "zidisha simba"].copy()
+
+    _sum_simba = (
+        _simba.groupby("Loan Officer Name", dropna=True)["Principal Amount"].sum().reset_index()
+        .rename(columns={"Loan Officer Name": "Officer", "Principal Amount": "Principal Amount (Zidisha Simba)"})
+    )
+
+    # Total (all products) disbursement per officer in current month
+    _sum_all_products = (
+        _cm_df_nc.groupby("Loan Officer Name", dropna=True)["Principal Amount"].sum().reset_index()
+        .rename(columns={"Loan Officer Name": "Officer", "Principal Amount": "Principal Amount (All Products)"})
+    )
+
+    _table_nc = (
+        _officers_all
+        .merge(_sum_all_products, on="Officer", how="left")
+        .merge(_sum_simba, on="Officer", how="left")
+        .fillna({
+            "Principal Amount (All Products)": 0,
+            "Principal Amount (Zidisha Simba)": 0,
+        })
+        .sort_values("Principal Amount (Zidisha Simba)", ascending=False)
+    )
+
+    # Table
 st.dataframe(
-    _computed.assign(**{
-        "Defaulted Amount as of 21st": _computed["Defaulted Amount as of 21st"].map(lambda v: f"{v:,.0f}"),
-        "Expected (1-21st)": _computed["Expected (1-21st)"].map(lambda v: f"{v:,.0f}"),
-        "Repaid as of 21st": _computed["Repaid as of 21st"].map(lambda v: f"{v:,.0f}"),
-        "Current Repaid": _computed.get("Current Repaid", pd.Series(dtype=float)).map(lambda v: f"{v:,.0f}"),
-        "Defaulted Amount Collected (Today)": _computed["Defaulted Amount Collected (Today)"].map(lambda v: f"{v:,.0f}"),
+        _table_nc.assign(**{
+            "Principal Amount (Zidisha Simba)": _table_nc["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+            "Principal Amount (All Products)": _table_nc["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
     }),
     use_container_width=True,
 )
 
-st.caption("Computed as: Current total repaid for 1-21st cohort (from rate file) minus 'Repaid as of 21st'.")
 
+# -------------------------------------------------------------
+# 7) Previous Same Weekday — Expected vs Repaid by Branch (Daily)
+# -------------------------------------------------------------
+_today = pd.Timestamp.today().normalize()
+_prev_same_weekday = _today - pd.Timedelta(days=7)
+_dow_label = _today.strftime('%A')
+
+# Build a daily DataFrame and select previous same weekday
+_daily_df = filtered.copy()
+_daily_df["__date"] = pd.to_datetime(_daily_df["Disbursed On Date"]).dt.floor("D")
+_day_prev_df = _daily_df[_daily_df["__date"] == _prev_same_weekday]
+
+st.markdown(f"### 7) Previous {_dow_label} — Expected vs Repaid by Branch")
+st.caption(f"Comparing branches for the previous {_dow_label}: {_prev_same_weekday.strftime('%d %b %Y')}")
+
+if _day_prev_df.empty:
+    st.info("No records for the previous same weekday given current filters.")
+else:
+    _by_branch_prev = (
+        _day_prev_df
+        .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+        .sum()
+        .reset_index()
+        .rename(columns={
+            "Total Expected Repayment": "Total Expected Repayment (Prev)",
+            "Total Repayment": "Total Repayment (Prev)",
+        })
+    )
+    _by_branch_prev["Repayment % (Prev)"] = np.where(
+        _by_branch_prev["Total Expected Repayment (Prev)"] > 0,
+        _by_branch_prev["Total Repayment (Prev)"] / _by_branch_prev["Total Expected Repayment (Prev)"],
+        np.nan,
+    )
+    _by_branch_prev = _by_branch_prev.sort_values("Repayment % (Prev)", ascending=False)
+
+    st.dataframe(
+        _by_branch_prev.assign(**{
+            "Total Expected Repayment (Prev)": _by_branch_prev["Total Expected Repayment (Prev)"].map(lambda v: f"{float(v):,.0f}"),
+            "Total Repayment (Prev)": _by_branch_prev["Total Repayment (Prev)"].map(lambda v: f"{float(v):,.0f}"),
+            "Repayment % (Prev)": _by_branch_prev["Repayment % (Prev)"].map(lambda v: f"{(v*100):.1f}%" if pd.notna(v) else "-"),
+        }),
+        use_container_width=True,
+    )
