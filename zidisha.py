@@ -830,7 +830,7 @@ else:
 # -------------------------------------------------------------
 # 6) New Clients — Zidisha Simba (Current Month)
 # -------------------------------------------------------------
-st.markdown("### 6) New Clients — Zidisha Simba (Current Month)")
+st.markdown("### 6) New Clients — Zidisha Simba vs All Products (Current Month)")
 
 # Detect product column
 _product_aliases = ["Product Name", "Product", "Loan Product"]
@@ -896,13 +896,42 @@ else:
     )
 
     # Table
-st.dataframe(
+    st.dataframe(
         _table_nc.assign(**{
             "Principal Amount (Zidisha Simba)": _table_nc["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "Principal Amount (All Products)": _table_nc["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
-    }),
-    use_container_width=True,
-)
+        }),
+        use_container_width=True,
+    )
+
+    # By Branch table
+    st.markdown("#### By Branch — Current Month")
+    _branches_all = (
+        _cm_df_nc.groupby("Branch Name", dropna=True)["Loan ID"].nunique().reset_index().drop(columns=["Loan ID"]).rename(columns={"Branch Name": "Branch"})
+    )
+    _sum_all_branch = (
+        _cm_df_nc.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index().rename(columns={"Branch Name": "Branch", "Principal Amount": "Principal Amount (All Products)"})
+    )
+    _sum_simba_branch = (
+        _simba.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index().rename(columns={"Branch Name": "Branch", "Principal Amount": "Principal Amount (Zidisha Simba)"})
+    )
+    _table_branch = (
+        _branches_all
+        .merge(_sum_all_branch, on="Branch", how="left")
+        .merge(_sum_simba_branch, on="Branch", how="left")
+        .fillna({
+            "Principal Amount (All Products)": 0,
+            "Principal Amount (Zidisha Simba)": 0,
+        })
+        .sort_values("Principal Amount (Zidisha Simba)", ascending=False)
+    )
+    st.dataframe(
+        _table_branch.assign(**{
+            "Principal Amount (All Products)": _table_branch["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
+            "Principal Amount (Zidisha Simba)": _table_branch["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+        }),
+        use_container_width=True,
+    )
 
 
 
