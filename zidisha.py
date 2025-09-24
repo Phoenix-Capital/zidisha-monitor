@@ -592,6 +592,22 @@ else:
 _base_day_df = filtered.assign(Date=filtered["Disbursed On Date"].dt.floor("D"))
 day_df = _base_day_df.query("Date == @day_date")
 
+# Repayment percentage checkpoints for current-month disbursements at 7/14/21/28 days
+_cards = st.columns(4)
+_filtered_with_date = filtered.assign(__date=pd.to_datetime(filtered["Disbursed On Date"]).dt.floor("D"))
+for _idx, _days in enumerate([7, 14, 21, 28]):
+    _threshold = (today - pd.Timedelta(days=_days)).normalize()
+    _cohort = _filtered_with_date[_filtered_with_date["__date"] == _threshold]
+    _exp_sum = pd.to_numeric(_cohort.get("Total Expected Repayment", pd.Series(dtype=float)), errors="coerce").sum()
+    _rep_sum = pd.to_numeric(_cohort.get("Total Repayment", pd.Series(dtype=float)), errors="coerce").sum()
+    _rate = (_rep_sum / _exp_sum) if _exp_sum and not pd.isna(_exp_sum) and _exp_sum != 0 else np.nan
+    with _cards[_idx]:
+        st.metric(
+            label=f"At {_days} days",
+            value=(f"{_rate*100:.1f}%" if pd.notna(_rate) else "-"),
+            help=f"Repayment % for loans issued exactly {_days} days ago ({_threshold.strftime('%d %b %Y')})"
+        )
+
 # Ensure all currently selected branches appear (with zeros if no activity on that day)
 all_branches = sorted(filtered["Branch Name"].dropna().unique().tolist())
 baseline = pd.DataFrame({
