@@ -606,7 +606,7 @@ for _idx, _days in enumerate([7, 14, 21, 28]):
             label=f"At {_days} days",
             value=(f"{_rate*100:.1f}%" if pd.notna(_rate) else "-"),
             help=f"Repayment % for loans issued exactly {_days} days ago ({_threshold.strftime('%d %b %Y')})"
-        )
+)
 
 # Ensure all currently selected branches appear (with zeros if no activity on that day)
 all_branches = sorted(filtered["Branch Name"].dropna().unique().tolist())
@@ -945,6 +945,100 @@ else:
         _table_branch.assign(**{
             "Principal Amount (All Products)": _table_branch["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
             "Principal Amount (Zidisha Simba)": _table_branch["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+        }),
+        use_container_width=True,
+    )
+
+    # By Branch — July vs August (Zidisha Simba) table
+    st.markdown("#### By Branch — July vs August (Zidisha Simba)")
+    # Use full filtered dataset to capture July/August of the latest year available
+    _filtered_all = filtered.copy()
+    _filtered_all["__date"] = pd.to_datetime(_filtered_all["Disbursed On Date"]).dt.floor("D")
+    _filtered_all["__prod_norm"] = (
+        _filtered_all[_product_col]
+        .astype(str).str.strip().str.lower().str.replace("_", " ").str.replace("\s+", " ", regex=True)
+    )
+    _simba_all = _filtered_all[_filtered_all["__prod_norm"] == "zidisha simba"].copy()
+    if _simba_all.empty:
+        st.info("No 'Zidisha Simba' records available in the current filters to compute July/August table.")
+    else:
+        _simba_all["__year"] = pd.to_datetime(_simba_all["__date"]).dt.year
+        _simba_all["__month"] = pd.to_datetime(_simba_all["__date"]).dt.month
+        _candidate_years = sorted(_simba_all.loc[_simba_all["__month"].isin([7, 8]), "__year"].unique())
+        if not _candidate_years:
+            st.info("No July/August 'Zidisha Simba' records available in the current filters.")
+        else:
+            _latest_year = int(_candidate_years[-1])
+            _july = _simba_all[(_simba_all["__year"] == _latest_year) & (_simba_all["__month"] == 7)]
+            _aug = _simba_all[(_simba_all["__year"] == _latest_year) & (_simba_all["__month"] == 8)]
+
+    _july_sum = (
+        _july.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index()
+        .rename(columns={"Branch Name": "Branch", "Principal Amount": "July Principal (Zidisha Simba)"})
+    )
+    _july_sum["Branch"] = _july_sum["Branch"].astype(str).str.strip()
+    _aug_sum = (
+        _aug.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index()
+        .rename(columns={"Branch Name": "Branch", "Principal Amount": "August Principal (Zidisha Simba)"})
+    )
+    _aug_sum["Branch"] = _aug_sum["Branch"].astype(str).str.strip()
+
+    # Compute defaulted for July/Aug (Expected - Repaid, floored at 0)
+    _july_er = (
+        _july.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+        .sum().reset_index()
+        .rename(columns={
+            "Branch Name": "Branch",
+            "Total Expected Repayment": "July Expected (Zidisha Simba)",
+            "Total Repayment": "July Repaid (Zidisha Simba)",
+        })
+    )
+    _july_er["Branch"] = _july_er["Branch"].astype(str).str.strip()
+    _july_er["Defaulted July (Zidisha Simba)"] = (
+        pd.to_numeric(_july_er["July Expected (Zidisha Simba)"], errors="coerce")
+        - pd.to_numeric(_july_er["July Repaid (Zidisha Simba)"], errors="coerce")
+    ).clip(lower=0)
+
+    _aug_er = (
+        _aug.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+        .sum().reset_index()
+        .rename(columns={
+            "Branch Name": "Branch",
+            "Total Expected Repayment": "August Expected (Zidisha Simba)",
+            "Total Repayment": "August Repaid (Zidisha Simba)",
+        })
+    )
+    _aug_er["Branch"] = _aug_er["Branch"].astype(str).str.strip()
+    _aug_er["Defaulted August (Zidisha Simba)"] = (
+        pd.to_numeric(_aug_er["August Expected (Zidisha Simba)"], errors="coerce")
+        - pd.to_numeric(_aug_er["August Repaid (Zidisha Simba)"], errors="coerce")
+    ).clip(lower=0)
+
+    _branches_union = pd.DataFrame({
+        "Branch": sorted(set(_july_sum["Branch"].astype(str)).union(set(_aug_sum["Branch"].astype(str))))
+    })
+    _branches_union["Branch"] = _branches_union["Branch"].astype(str).str.strip()
+    _table_jul_aug = (
+        _branches_union
+        .merge(_july_sum, on="Branch", how="left")
+        .merge(_aug_sum, on="Branch", how="left")
+        .merge(_july_er[["Branch", "Defaulted July (Zidisha Simba)"]], on="Branch", how="left")
+        .merge(_aug_er[["Branch", "Defaulted August (Zidisha Simba)"]], on="Branch", how="left")
+        .fillna({
+            "July Principal (Zidisha Simba)": 0,
+            "August Principal (Zidisha Simba)": 0,
+            "Defaulted July (Zidisha Simba)": 0,
+            "Defaulted August (Zidisha Simba)": 0,
+        })
+        .sort_values("August Principal (Zidisha Simba)", ascending=False)
+    )
+
+    st.dataframe(
+        _table_jul_aug.assign(**{
+            "July Principal (Zidisha Simba)": _table_jul_aug["July Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+            "August Principal (Zidisha Simba)": _table_jul_aug["August Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+            "Defaulted July (Zidisha Simba)": _table_jul_aug["Defaulted July (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+            "Defaulted August (Zidisha Simba)": _table_jul_aug["Defaulted August (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
         }),
         use_container_width=True,
     )
