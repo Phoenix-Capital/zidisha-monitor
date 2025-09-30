@@ -763,9 +763,9 @@ st.caption(
 
 
 # -------------------------------------------------------------
-# 5) Derived Repayments (Aug 1–21) with Defaulted Amounts
+# 5) Defaulted Amounts — August (Full Month)
 # -------------------------------------------------------------
-st.markdown("### 5) Derived Repayments (Aug 1–21)")
+st.markdown("### 5) Defaulted Amounts — August (Full Month)")
 
 _max_d = pd.to_datetime(filtered["Disbursed On Date"]).max()
 if pd.isna(_max_d):
@@ -773,74 +773,71 @@ if pd.isna(_max_d):
 else:
     _yr = int(_max_d.year)
     _aug_start = pd.Timestamp(_yr, 8, 1)
-    _aug_end = pd.Timestamp(_yr, 8, 21)
+    _sep_start = pd.Timestamp(_yr, 9, 1)
     _aug_mask = (
         (pd.to_datetime(filtered["Disbursed On Date"]) >= _aug_start) &
-        (pd.to_datetime(filtered["Disbursed On Date"]) <= _aug_end)
+        (pd.to_datetime(filtered["Disbursed On Date"]) < _sep_start)
     )
     _aug_df = filtered.loc[_aug_mask].copy()
 
-    # Aggregate derived totals by branch for the window
-    _derived_tbl = (
-        _aug_df
-        .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
-        .sum()
-        .reset_index()
-        .rename(columns={
-            "Total Expected Repayment": "Total Expected Repayment Derived",
-            "Total Repayment": "Total Repayment Derived",
-        })
-    )
+    if _aug_df.empty:
+        st.info("No August records found under current filters.")
+    else:
+        # Static defaulted amounts for August (provided)
+        _aug_defaulted_static = [
+            {"Branch": "Utawala Branch", "Defaulted Amount (August)": 558_384},
+            {"Branch": "Pipeline Branch", "Defaulted Amount (August)": 540_488},
+            {"Branch": "Kasarani Branch", "Defaulted Amount (August)": 503_011},
+            {"Branch": "Kiambu Branch", "Defaulted Amount (August)": 415_887},
+            {"Branch": "Adams Branch", "Defaulted Amount (August)": 336_204},
+            {"Branch": "Kawangware Branch", "Defaulted Amount (August)": 228_501},
+        ]
+        _aug_defaulted_df = pd.DataFrame(_aug_defaulted_static)
 
-    # Provided defaulted amounts as of 21st (static)
-    _defaulted_records = [
-        {"Branch": "Utawala Branch", "Defaulted Amount as of 21st": 467_138},
-        {"Branch": "Pipeline Branch", "Defaulted Amount as of 21st": 404_285},
-        {"Branch": "Kasarani Branch", "Defaulted Amount as of 21st": 304_311},
-        {"Branch": "Kiambu Branch", "Defaulted Amount as of 21st": 302_653},
-        {"Branch": "Adams Branch", "Defaulted Amount as of 21st": 212_063},
-        {"Branch": "Kawangware Branch", "Defaulted Amount as of 21st": 202_513},
-    ]
-    _defaulted_df = pd.DataFrame(_defaulted_records)
+        # Derived totals from data for August (Expected/Repayment)
+        _aug_derived = (
+            _aug_df
+            .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+            .sum()
+            .reset_index()
+            .rename(columns={
+                "Branch Name": "Branch",
+                "Total Expected Repayment": "Total Expected Repayment Derived",
+                "Total Repayment": "Total Repayment Derived",
+            })
+        )
 
-    # Build final table starting from the defaulted list to ensure only the specified branches appear
-    _final_tbl = (
-        _defaulted_df
-        .merge(_derived_tbl, left_on="Branch", right_on="Branch Name", how="left")
-        .drop(columns=["Branch Name"], errors="ignore")
-        .fillna(0)
-        .sort_values("Defaulted Amount as of 21st", ascending=False)
-    )
+        # Merge static defaulted with derived totals
+        _aug_table = (
+            _aug_defaulted_df
+            .merge(_aug_derived, on="Branch", how="left")
+            .fillna({
+                "Total Expected Repayment Derived": 0,
+                "Total Repayment Derived": 0,
+            })
+            .sort_values("Defaulted Amount (August)", ascending=False)
+        )
 
-    # Compute Defaults Repayed = Defaulted - (Expected Derived - Repayment Derived)
-    _expected_minus_repaid = (
-        _final_tbl["Total Expected Repayment Derived"].astype(float)
-        - _final_tbl["Total Repayment Derived"].astype(float)
-    )
-    _raw_defaults_repayed = (
-        _final_tbl["Defaulted Amount as of 21st"].astype(float) - _expected_minus_repaid
-    )
-    # Cap between 0 and Defaulted Amount
-    _final_tbl["Defaults Repayed"] = np.minimum(
-        np.maximum(_raw_defaults_repayed, 0.0),
-        _final_tbl["Defaulted Amount as of 21st"].astype(float),
-    )
+        # Challenge Amount Payed = Static Defaulted - (Expected Derived - Repayment Derived)
+        _aug_table["Challenge Amount Payed"] = (
+            pd.to_numeric(_aug_table["Defaulted Amount (August)"], errors="coerce")
+            - (
+                pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce")
+                - pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce")
+            )
+        )
+        _aug_table["Commission (4%)"] = pd.to_numeric(_aug_table["Challenge Amount Payed"], errors="coerce") * 0.04
 
-    st.dataframe(
-        _final_tbl.assign(**{
-            "Defaulted Amount as of 21st": _final_tbl["Defaulted Amount as of 21st"].map(lambda v: f"{float(v):,.0f}"),
-            "Total Expected Repayment Derived": _final_tbl["Total Expected Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
-            "Total Repayment Derived": _final_tbl["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
-            "Defaults Repayed": _final_tbl["Defaults Repayed"].map(lambda v: f"{float(v):,.0f}"),
-        })[[
-            "Branch",
-            "Defaulted Amount as of 21st",
-            "Defaults Repayed",
-            "Total Expected Repayment Derived",
-            "Total Repayment Derived",
-        ]],
-        use_container_width=True,
-    )
+        st.dataframe(
+            _aug_table.assign(**{
+                "Defaulted Amount (August)": _aug_table["Defaulted Amount (August)"].map(lambda v: f"{float(v):,.0f}"),
+                "Total Expected Repayment Derived": _aug_table["Total Expected Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+                "Total Repayment Derived": _aug_table["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+                "Challenge Amount Payed": _aug_table["Challenge Amount Payed"].map(lambda v: f"{float(v):,.0f}"),
+                "Commission (4%)": _aug_table["Commission (4%)"].map(lambda v: f"{float(v):,.0f}"),
+            }),
+            use_container_width=True,
+        )
 
 
 # -------------------------------------------------------------
@@ -1033,15 +1030,15 @@ else:
         .sort_values("August Principal (Zidisha Simba)", ascending=False)
     )
 
-    st.dataframe(
+st.dataframe(
         _table_jul_aug.assign(**{
             "July Principal (Zidisha Simba)": _table_jul_aug["July Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "August Principal (Zidisha Simba)": _table_jul_aug["August Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "Defaulted July (Zidisha Simba)": _table_jul_aug["Defaulted July (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "Defaulted August (Zidisha Simba)": _table_jul_aug["Defaulted August (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-        }),
-        use_container_width=True,
-    )
+    }),
+    use_container_width=True,
+)
 
 
 
