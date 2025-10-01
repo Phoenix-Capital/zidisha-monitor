@@ -13,7 +13,7 @@ import streamlit as st
 # -------------------------------------------------------------
 # Set OVERRIDE_DATE to test what the dashboard would show on a different date
 # Examples:
-# OVERRIDE_DATE = pd.Timestamp("2024-09-29")  # Yesterday
+OVERRIDE_DATE = None #pd.Timestamp("2024-09-29")  # Yesterday
 
 
 
