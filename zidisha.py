@@ -837,6 +837,11 @@ else:
         )
         _aug_table["Commission (4%)"] = pd.to_numeric(_aug_table["Challenge Amount Payed"], errors="coerce") * 0.04
 
+        # Repayment % = Total Repayment Derived / Total Expected Repayment Derived
+        _exp = pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce")
+        _rep = pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce")
+        _aug_table["Repayment % (Derived)"] = np.where(_exp > 0, _rep / _exp, np.nan)
+
         st.dataframe(
             _aug_table.assign(**{
                 "Defaulted Amount (August)": _aug_table["Defaulted Amount (August)"].map(lambda v: f"{float(v):,.0f}"),
@@ -844,6 +849,7 @@ else:
                 "Total Repayment Derived": _aug_table["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
                 "Challenge Amount Payed": _aug_table["Challenge Amount Payed"].map(lambda v: f"{float(v):,.0f}"),
                 "Commission (4%)": _aug_table["Commission (4%)"].map(lambda v: f"{float(v):,.0f}"),
+                "Repayment % (Derived)": _aug_table["Repayment % (Derived)"].map(lambda v: f"{(float(v)*100):.1f}%" if pd.notna(v) else "-"),
             }),
             use_container_width=True,
         )
@@ -891,7 +897,7 @@ else:
         .str.strip()
         .str.lower()
         .str.replace("_", " ")
-        .str.replace("\s+", " ", regex=True)
+        .str.replace(r"\s+", " ", regex=True)
     )
     _simba = _cm_df_nc[_cm_df_nc["__prod_norm"] == "zidisha simba"].copy()
 
@@ -962,7 +968,7 @@ else:
     _filtered_all["__date"] = pd.to_datetime(_filtered_all["Disbursed On Date"]).dt.floor("D")
     _filtered_all["__prod_norm"] = (
         _filtered_all[_product_col]
-        .astype(str).str.strip().str.lower().str.replace("_", " ").str.replace("\s+", " ", regex=True)
+        .astype(str).str.strip().str.lower().str.replace("_", " ").str.replace(r"\s+", " ", regex=True)
     )
     _simba_all = _filtered_all[_filtered_all["__prod_norm"] == "zidisha simba"].copy()
     if _simba_all.empty:
@@ -1039,15 +1045,15 @@ else:
         .sort_values("August Principal (Zidisha Simba)", ascending=False)
     )
 
-st.dataframe(
+    st.dataframe(
         _table_jul_aug.assign(**{
             "July Principal (Zidisha Simba)": _table_jul_aug["July Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "August Principal (Zidisha Simba)": _table_jul_aug["August Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "Defaulted July (Zidisha Simba)": _table_jul_aug["Defaulted July (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
             "Defaulted August (Zidisha Simba)": _table_jul_aug["Defaulted August (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-    }),
-    use_container_width=True,
-)
+        }),
+        use_container_width=True,
+    )
 
 
 
