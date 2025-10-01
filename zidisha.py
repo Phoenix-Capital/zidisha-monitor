@@ -9,6 +9,15 @@ import streamlit as st
 
 
 # -------------------------------------------------------------
+# Date Override (for testing different dates as "today")
+# -------------------------------------------------------------
+# Set OVERRIDE_DATE to test what the dashboard would show on a different date
+# Examples:
+# OVERRIDE_DATE = pd.Timestamp("2024-09-29")  # Yesterday
+
+
+
+# -------------------------------------------------------------
 # Streamlit Page Config
 # -------------------------------------------------------------
 st.set_page_config(
@@ -189,7 +198,7 @@ if selected_officers:
 
 
 # Compute "same period last month" window and apply to all visuals
-today = pd.Timestamp.today().normalize()
+today = OVERRIDE_DATE if OVERRIDE_DATE is not None else pd.Timestamp.today().normalize()
 first_this_month = today.replace(day=1)
 last_prev_month = first_this_month - pd.Timedelta(days=1)
 first_prev_month = last_prev_month.replace(day=1)
