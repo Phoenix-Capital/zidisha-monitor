@@ -842,6 +842,27 @@ else:
         _rep = pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce")
         _aug_table["Repayment % (Derived)"] = np.where(_exp > 0, _rep / _exp, np.nan)
 
+        # Append totals row labeled 'Zidisha'
+        _tot_defaulted = pd.to_numeric(_aug_table["Defaulted Amount (August)"], errors="coerce").sum()
+        _tot_expected = pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce").sum()
+        _tot_repaid = pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce").sum()
+        _tot_challenge = pd.to_numeric(_aug_table["Challenge Amount Payed"], errors="coerce").sum()
+        _tot_commission = pd.to_numeric(_aug_table["Commission (4%)"], errors="coerce").sum()
+        _tot_rate = (_tot_repaid / _tot_expected) if _tot_expected and not pd.isna(_tot_expected) and _tot_expected != 0 else np.nan
+
+        _totals_row = pd.DataFrame([
+            {
+                "Branch": "Zidisha",
+                "Defaulted Amount (August)": _tot_defaulted,
+                "Total Expected Repayment Derived": _tot_expected,
+                "Total Repayment Derived": _tot_repaid,
+                "Challenge Amount Payed": _tot_challenge,
+                "Commission (4%)": _tot_commission,
+                "Repayment % (Derived)": _tot_rate,
+            }
+        ])
+        _aug_table = pd.concat([_aug_table, _totals_row], ignore_index=True)
+
         st.dataframe(
             _aug_table.assign(**{
                 "Defaulted Amount (August)": _aug_table["Defaulted Amount (August)"].map(lambda v: f"{float(v):,.0f}"),
