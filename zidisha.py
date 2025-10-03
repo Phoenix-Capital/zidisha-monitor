@@ -138,63 +138,20 @@ def pct_fmt(value: float) -> str:
 
 
 # -------------------------------------------------------------
-# Sidebar: Data source selection & Filters
+# Data Loading (no UI controls)
 # -------------------------------------------------------------
-st.sidebar.title("Data Source")
-
 default_files = find_excel_files(".")
-selected_file = st.sidebar.selectbox(
-    "Select dataset file",
-    options=default_files,
-    index=default_files.index(default_files[-1]) if default_files else 0,
-    placeholder="Choose an Excel file",
-)
-
-uploaded = st.sidebar.file_uploader("...or upload an Excel file", type=["xlsx", "xls"])
-
-data_file_to_use = selected_file
-if uploaded is not None:
-    data_file_to_use = uploaded
-
-if not data_file_to_use:
-    st.error("No Excel file found. Please place the dataset in this folder or upload it from the sidebar.")
+if not default_files:
+    st.error("No Excel file found. Please place the dataset in this folder.")
     st.stop()
 
 with st.spinner("Loading dataset..."):
-    df = load_dataset(data_file_to_use)
+    df = load_dataset(default_files[-1])  # Use the latest file
 
-
-st.sidebar.title("Filters")
-
-# Date range filter
+# Use all data without filters
+filtered = df.copy()
 min_date = pd.to_datetime(df["Disbursed On Date"]).min()
 max_date = pd.to_datetime(df["Disbursed On Date"]).max()
-
-date_range: Tuple[pd.Timestamp, pd.Timestamp] = st.sidebar.date_input(
-    "Disbursement date range",
-    value=(min_date.to_pydatetime() if pd.notna(min_date) else None,
-           max_date.to_pydatetime() if pd.notna(max_date) else None),
-)
-
-branches = sorted([b for b in df["Branch Name"].dropna().unique()])
-officers = sorted([o for o in df["Loan Officer Name"].dropna().unique()])
-
-selected_branches = st.sidebar.multiselect("Branch(es)", options=branches, default=branches)
-selected_officers = st.sidebar.multiselect("Loan Officer(s)", options=officers, default=officers)
-
-
-# Apply filters
-filtered = df.copy()
-if isinstance(date_range, (list, tuple)) and len(date_range) == 2 and all(date_range):
-    start_date = pd.to_datetime(date_range[0])
-    end_date = pd.to_datetime(date_range[1])
-    filtered = filtered[(filtered["Disbursed On Date"] >= start_date) & (filtered["Disbursed On Date"] <= end_date)]
-
-if selected_branches:
-    filtered = filtered[filtered["Branch Name"].isin(selected_branches)]
-
-if selected_officers:
-    filtered = filtered[filtered["Loan Officer Name"].isin(selected_officers)]
 
 
 # Compute "same period last month" window and apply to all visuals
@@ -212,18 +169,9 @@ mask_period = (
 )
 period_df = filtered.loc[mask_period].copy()
 
-## Sidebar control: day performance date (default to computed same-day-last-month)
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Day Performance Date")
+# Day performance date (no UI control)
 _default_day = end_window.to_pydatetime()
-st.sidebar.date_input(
-    "Select day (default: same day last month)",
-    value=_default_day,
-    key="day_perf_date",
-    min_value=min_date.to_pydatetime() if pd.notna(min_date) else None,
-    max_value=max_date.to_pydatetime() if pd.notna(max_date) else None,
-)
-_sidebar_val = st.session_state.get("day_perf_date", _default_day)
+_sidebar_val = _default_day
 
 
 # -------------------------------------------------------------
