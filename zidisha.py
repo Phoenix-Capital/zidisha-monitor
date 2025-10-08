@@ -169,8 +169,8 @@ mask_period = (
 )
 period_df = filtered.loc[mask_period].copy()
 
-# Day performance date (no UI control)
-_default_day = end_window.to_pydatetime()
+# Day performance date default to today (or OVERRIDE_DATE if set)
+_default_day = (OVERRIDE_DATE if OVERRIDE_DATE is not None else pd.Timestamp.today().normalize()).to_pydatetime()
 _sidebar_val = _default_day
 
 
@@ -546,7 +546,12 @@ if _inline_val is not None:
     day_date = pd.to_datetime(_inline_val).normalize()
 else:
     day_date = pd.to_datetime(_sidebar_val).normalize()
-_base_day_df = filtered.assign(Date=filtered["Disbursed On Date"].dt.floor("D"))
+# Build day slice using Expected Matured On Date if available; fallback to Disbursed On Date
+_matured_col_for_day = "Expected Matured On Date"
+if _matured_col_for_day in filtered.columns:
+    _base_day_df = filtered.assign(Date=pd.to_datetime(filtered[_matured_col_for_day]).dt.floor("D"))
+else:
+    _base_day_df = filtered.assign(Date=pd.to_datetime(filtered["Disbursed On Date"]).dt.floor("D"))
 day_df = _base_day_df.query("Date == @day_date")
 
 # Repayment percentage checkpoints for current-month disbursements at 7/14/21/28 days
