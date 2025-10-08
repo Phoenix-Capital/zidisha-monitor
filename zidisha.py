@@ -532,13 +532,15 @@ st.plotly_chart(fig_same_period, use_container_width=True)
 
 # Day performance by branch: Repaid vs Expected (selectable date)
 st.markdown("#### Day Performance — selected date")
+# Allow selecting future dates up to +5 years from today
+_max_selectable_date = (pd.Timestamp.today().normalize() + pd.Timedelta(days=365*5)).to_pydatetime()
 st.date_input(
     "Change day here (or via sidebar)",
     value=st.session_state.get("day_perf_date", _default_day),
     key="day_perf_date_inline",
     help="Defaults to the same day last month; select any date within available data.",
     min_value=min_date.to_pydatetime() if pd.notna(min_date) else None,
-    max_value=max_date.to_pydatetime() if pd.notna(max_date) else None,
+    max_value=_max_selectable_date,
 )
 # Determine effective date without mutating existing widget state
 _inline_val = st.session_state.get("day_perf_date_inline")
@@ -600,6 +602,10 @@ table_day["Repayment %"] = np.where(
     table_day["Total Repayment"] / table_day["Total Expected Repayment"],
     np.nan,
 )
+# Remove Kilimani from rows (case-insensitive), preserve Zidisha aggregate
+_is_kilimani = table_day["Branch Name"].astype(str).str.strip().str.lower().str.contains("kilimani", na=False)
+_is_zidisha_row = table_day["Branch Name"].astype(str).str.strip().str.lower().eq("zidisha")
+table_day = table_day.loc[~(_is_kilimani & ~_is_zidisha_row)]
 table_day = table_day.sort_values("Repayment %", ascending=False)
 
 # Display as a table with formatted columns
