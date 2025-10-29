@@ -145,8 +145,25 @@ if not default_files:
     st.error("No Excel file found. Please place the dataset in this folder.")
     st.stop()
 
+latest_data_path = default_files[-1]
+
+# Detect file changes and auto-refresh
+try:
+    _current_mtime = os.path.getmtime(latest_data_path)
+except Exception:
+    _current_mtime = None
+
+_prev_mtime = st.session_state.get("_data_file_mtime")
+if _prev_mtime is None:
+    st.session_state["_data_file_mtime"] = _current_mtime
+elif _current_mtime is not None and _prev_mtime != _current_mtime:
+    # Underlying data changed → clear caches and rerun
+    st.cache_data.clear()
+    st.session_state["_data_file_mtime"] = _current_mtime
+    st.experimental_rerun()
+
 with st.spinner("Loading dataset..."):
-    df = load_dataset(default_files[-1])  # Use the latest file
+    df = load_dataset(latest_data_path)  # Use the latest file
 
 # Use all data without filters
 filtered = df.copy()
@@ -177,7 +194,7 @@ _sidebar_val = _default_day
 # -------------------------------------------------------------
 # Header & KPI Cards
 # -------------------------------------------------------------
-st.markdown("## 📊 Phoenix Capital — Loan Performance Dashboard")
+st.markdown("## Phoenix Capital — Loan Performance Dashboard")
 st.caption(
     f"Interactive analytics for last month's same period: "
     f"{start_window.strftime('%d %b %Y')} → {end_window.strftime('%d %b %Y')}"
