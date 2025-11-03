@@ -300,8 +300,18 @@ with kpi_cols[4]:
 # Current month (end of month) KPI cards — loans maturing in current month (Expected Matured On Date)
 st.caption(f"Current month (end of month) snapshot for loans maturing in {pm_label} (based on Expected Matured On Date)")
 pm_cols = st.columns(5)
+
+# Compute previous month disbursed amount (by Disbursed On Date)
+_prev_disb_mask = (
+    (filtered["Disbursed On Date"] >= first_prev_month) &
+    (filtered["Disbursed On Date"] <= last_prev_month)
+)
+_prev_disb_df = filtered.loc[_prev_disb_mask].copy()
+_prev_total_disbursed = pd.to_numeric(_prev_disb_df.get("Principal Amount", pd.Series(dtype=float)), errors="coerce").sum()
+_prev_label = last_prev_month.strftime("%b %Y")
+
 with pm_cols[0]:
-    st.metric(f"Principle to be collected - {pm_label}", kpi_value_fmt(pm_total_disbursed))
+    st.metric(f"{_prev_label} — Total Disbursed", kpi_value_fmt(_prev_total_disbursed))
 with pm_cols[1]:
     st.metric(f"{pm_label} — Total Repaid", kpi_value_fmt(pm_total_repaid))
 with pm_cols[2]:
