@@ -180,6 +180,17 @@ target_day = min(today.day, last_prev_month.day)
 start_window = first_prev_month
 end_window = first_prev_month.replace(day=target_day)
 
+# Detect month changes and clear cache if month has transitioned
+_current_month_key = f"{today.year}-{today.month}"
+_prev_month_key = st.session_state.get("_current_month_key")
+if _prev_month_key is not None and _prev_month_key != _current_month_key:
+    # Month has changed - clear cache and rerun to ensure fresh calculations
+    st.cache_data.clear()
+    st.session_state["_current_month_key"] = _current_month_key
+    st.experimental_rerun()
+if _prev_month_key is None:
+    st.session_state["_current_month_key"] = _current_month_key
+
 mask_period = (
     (filtered["Disbursed On Date"] >= pd.to_datetime(start_window)) &
     (filtered["Disbursed On Date"] <= pd.to_datetime(end_window))
@@ -206,20 +217,47 @@ total_outstanding = period_df["Total Outstanding"].sum()
 total_expected = period_df["Total Expected Repayment"].sum()
 overall_repayment_rate = (total_amount_repaid / total_expected) if total_expected and not pd.isna(total_expected) and total_expected != 0 else np.nan
 
-# Previous month full-month metrics (loans issued in that month)
-prev_month_mask = (
-    (filtered["Disbursed On Date"] >= first_prev_month) &
-    (filtered["Disbursed On Date"] <= last_prev_month)
-)
-prev_month_df = filtered.loc[prev_month_mask].copy()
+# Current month full-month metrics (using Expected Matured On Date)
+# All metrics use loans whose "Expected Matured On Date" falls in the current month (full month, end of month)
+# Calculate first day of next month for end-of-month filtering
+if today.month == 12:
+    first_next_month = pd.Timestamp(today.year + 1, 1, 1)
+else:
+    first_next_month = pd.Timestamp(today.year, today.month + 1, 1)
 
-pm_total_disbursed = prev_month_df["Principal Amount"].sum()
-pm_total_repaid = prev_month_df["Total Repayment"].sum()
-pm_total_outstanding = prev_month_df["Total Outstanding"].sum()
-pm_total_expected = prev_month_df["Total Expected Repayment"].sum()
+_matured_col = "Expected Matured On Date"
+if _matured_col in filtered.columns:
+    # Filter by Expected Matured On Date for the full current month (end of month)
+    current_month_matured_mask = (
+        (pd.to_datetime(filtered[_matured_col], errors="coerce") >= first_this_month) &
+        (pd.to_datetime(filtered[_matured_col], errors="coerce") < first_next_month)
+    )
+    current_month_matured_df = filtered.loc[current_month_matured_mask].copy()
+    # Use this dataframe for current month metrics
+    prev_month_df = current_month_matured_df  # Keep variable name for backward compatibility
+    
+    pm_total_disbursed = current_month_matured_df["Principal Amount"].sum()
+    pm_total_repaid = current_month_matured_df["Total Repayment"].sum()
+    pm_total_outstanding = current_month_matured_df["Total Outstanding"].sum()
+    pm_total_expected = current_month_matured_df["Total Expected Repayment"].sum()
+else:
+    # Fallback to Disbursed On Date if Expected Matured On Date is not available (full month)
+    current_month_mask = (
+        (filtered["Disbursed On Date"] >= first_this_month) &
+        (filtered["Disbursed On Date"] < first_next_month)
+    )
+    current_month_df = filtered.loc[current_month_mask].copy()
+    # Use this dataframe for current month metrics
+    prev_month_df = current_month_df  # Keep variable name for backward compatibility
+    
+    pm_total_disbursed = current_month_df["Principal Amount"].sum()
+    pm_total_repaid = current_month_df["Total Repayment"].sum()
+    pm_total_outstanding = current_month_df["Total Outstanding"].sum()
+    pm_total_expected = current_month_df["Total Expected Repayment"].sum()
+
 pm_repayment_rate = (pm_total_repaid / pm_total_expected) if pm_total_expected and not pd.isna(pm_total_expected) and pm_total_expected != 0 else np.nan
 
-pm_label = last_prev_month.strftime("%b %Y")
+pm_label = today.strftime("%b %Y")
 
 # Best Branch and Officer by repayment performance ratio
 branch_perf = (
@@ -259,11 +297,11 @@ with kpi_cols[3]:
 with kpi_cols[4]:
     st.metric("Repayment Rate (All Branches)", pct_fmt(overall_repayment_rate))
 
-# Previous month (full month) KPI cards — loans issued in that month
-st.caption(f"Previous month end-of-month snapshot for loans disbursed in {pm_label}")
+# Current month (end of month) KPI cards — loans maturing in current month (Expected Matured On Date)
+st.caption(f"Current month (end of month) snapshot for loans maturing in {pm_label} (based on Expected Matured On Date)")
 pm_cols = st.columns(5)
 with pm_cols[0]:
-    st.metric(f"{pm_label} — Total Disbursed", kpi_value_fmt(pm_total_disbursed))
+    st.metric(f"Principle to be collected - {pm_label}", kpi_value_fmt(pm_total_disbursed))
 with pm_cols[1]:
     st.metric(f"{pm_label} — Total Repaid", kpi_value_fmt(pm_total_repaid))
 with pm_cols[2]:
@@ -426,7 +464,7 @@ if not branch_expected.empty:
             )
             idx += 1
 
-    # Add previous month cohort cards below
+    # Add current month (end of month) cohort cards below
     _pm_branch_full = (
         prev_month_df.groupby("Branch Name", dropna=True)[["Total Repayment", "Total Expected Repayment"]]
         .sum()
@@ -748,309 +786,66 @@ st.caption(
 
 
 # -------------------------------------------------------------
-# 5) Defaulted Amounts — August (Full Month)
+# 5) Previous Month Performance (Full Month)
 # -------------------------------------------------------------
-st.markdown("### 5) Defaulted Amounts — August (Full Month)")
+st.markdown("### 5) Previous Month Performance (Full Month)")
 
-_max_d = pd.to_datetime(filtered["Disbursed On Date"]).max()
-if pd.isna(_max_d):
-    st.info("No data available to compute Aug 1–21 derived repayments.")
+# Determine previous month window dynamically based on Expected Matured On Date if available
+_prev_use_col = "Expected Matured On Date" if "Expected Matured On Date" in filtered.columns else "Disbursed On Date"
+
+_prev_last_day = first_this_month - pd.Timedelta(days=1)
+_prev_first_day = _prev_last_day.replace(day=1)
+
+_prev_mask = (
+    (pd.to_datetime(filtered[_prev_use_col], errors="coerce") >= _prev_first_day) &
+    (pd.to_datetime(filtered[_prev_use_col], errors="coerce") <= _prev_last_day)
+)
+_prev_df = filtered.loc[_prev_mask].copy()
+
+if _prev_df.empty:
+    st.info("No records found for the previous month under current data.")
 else:
-    _yr = int(_max_d.year)
-    _aug_start = pd.Timestamp(_yr, 8, 1)
-    _sep_start = pd.Timestamp(_yr, 9, 1)
-    _aug_mask = (
-        (pd.to_datetime(filtered["Disbursed On Date"]) >= _aug_start) &
-        (pd.to_datetime(filtered["Disbursed On Date"]) < _sep_start)
-    )
-    _aug_df = filtered.loc[_aug_mask].copy()
-
-    if _aug_df.empty:
-        st.info("No August records found under current filters.")
-    else:
-        # Static defaulted amounts for August (provided)
-        _aug_defaulted_static = [
-            {"Branch": "Utawala Branch", "Defaulted Amount (August)": 558_384},
-            {"Branch": "Pipeline Branch", "Defaulted Amount (August)": 540_488},
-            {"Branch": "Kasarani Branch", "Defaulted Amount (August)": 503_011},
-            {"Branch": "Kiambu Branch", "Defaulted Amount (August)": 415_887},
-            {"Branch": "Adams Branch", "Defaulted Amount (August)": 336_204},
-            {"Branch": "Kawangware Branch", "Defaulted Amount (August)": 228_501},
-        ]
-        _aug_defaulted_df = pd.DataFrame(_aug_defaulted_static)
-
-        # Derived totals from data for August (Expected/Repayment)
-        _aug_derived = (
-            _aug_df
-            .groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
-            .sum()
-            .reset_index()
-            .rename(columns={
-                "Branch Name": "Branch",
-                "Total Expected Repayment": "Total Expected Repayment Derived",
-                "Total Repayment": "Total Repayment Derived",
-            })
-        )
-
-        # Merge static defaulted with derived totals
-        _aug_table = (
-            _aug_defaulted_df
-            .merge(_aug_derived, on="Branch", how="left")
-            .fillna({
-                "Total Expected Repayment Derived": 0,
-                "Total Repayment Derived": 0,
-            })
-            .sort_values("Defaulted Amount (August)", ascending=False)
-        )
-
-        # Challenge Amount Payed = Static Defaulted - (Expected Derived - Repayment Derived)
-        _aug_table["Challenge Amount Payed"] = (
-            pd.to_numeric(_aug_table["Defaulted Amount (August)"], errors="coerce")
-            - (
-                pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce")
-                - pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce")
-            )
-        )
-        _aug_table["Commission (4%)"] = pd.to_numeric(_aug_table["Challenge Amount Payed"], errors="coerce") * 0.04
-
-        # Repayment % = Total Repayment Derived / Total Expected Repayment Derived
-        _exp = pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce")
-        _rep = pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce")
-        _aug_table["Repayment % (Derived)"] = np.where(_exp > 0, _rep / _exp, np.nan)
-
-        # Append totals row labeled 'Zidisha'
-        _tot_defaulted = pd.to_numeric(_aug_table["Defaulted Amount (August)"], errors="coerce").sum()
-        _tot_expected = pd.to_numeric(_aug_table["Total Expected Repayment Derived"], errors="coerce").sum()
-        _tot_repaid = pd.to_numeric(_aug_table["Total Repayment Derived"], errors="coerce").sum()
-        _tot_challenge = pd.to_numeric(_aug_table["Challenge Amount Payed"], errors="coerce").sum()
-        _tot_commission = pd.to_numeric(_aug_table["Commission (4%)"], errors="coerce").sum()
-        _tot_rate = (_tot_repaid / _tot_expected) if _tot_expected and not pd.isna(_tot_expected) and _tot_expected != 0 else np.nan
-
-        _totals_row = pd.DataFrame([
-            {
-                "Branch": "Zidisha",
-                "Defaulted Amount (August)": _tot_defaulted,
-                "Total Expected Repayment Derived": _tot_expected,
-                "Total Repayment Derived": _tot_repaid,
-                "Challenge Amount Payed": _tot_challenge,
-                "Commission (4%)": _tot_commission,
-                "Repayment % (Derived)": _tot_rate,
-            }
-        ])
-        _aug_table = pd.concat([_aug_table, _totals_row], ignore_index=True)
-
-        st.dataframe(
-            _aug_table.assign(**{
-                "Defaulted Amount (August)": _aug_table["Defaulted Amount (August)"].map(lambda v: f"{float(v):,.0f}"),
-                "Total Expected Repayment Derived": _aug_table["Total Expected Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
-                "Total Repayment Derived": _aug_table["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
-                "Challenge Amount Payed": _aug_table["Challenge Amount Payed"].map(lambda v: f"{float(v):,.0f}"),
-                "Commission (4%)": _aug_table["Commission (4%)"].map(lambda v: f"{float(v):,.0f}"),
-                "Repayment % (Derived)": _aug_table["Repayment % (Derived)"].map(lambda v: f"{(float(v)*100):.1f}%" if pd.notna(v) else "-"),
-            }),
-            use_container_width=True,
-        )
-
-
-# -------------------------------------------------------------
-# 6) New Clients — Zidisha Simba (Current Month)
-# -------------------------------------------------------------
-st.markdown("### 6) New Clients — Zidisha Simba vs All Products (Current Month)")
-
-# Detect product column
-_product_aliases = ["Product Name", "Product", "Loan Product"]
-
-def _normalize_name(n: str) -> str:
-    s = str(n).strip().lower()
-    s = " ".join(s.replace("_", " ").split())
-    return s
-
-_normalized_to_actual = { _normalize_name(c): c for c in df.columns }
-_product_col = None
-for _cand in _product_aliases:
-    _norm_cand = _normalize_name(_cand)
-    if _norm_cand in _normalized_to_actual:
-        _product_col = _normalized_to_actual[_norm_cand]
-        break
-
-if _product_col is None:
-    st.info("Product column not found. Expected one of: Product Name, Product, Loan Product.")
-elif "Loan Officer Name" not in df.columns:
-    st.info("Column 'Loan Officer Name' not found in dataset.")
-else:
-    _cm_mask_nc = (
-        (filtered["Disbursed On Date"] >= first_this_month) &
-        (filtered["Disbursed On Date"] <= today)
-    )
-    _cm_df_nc = filtered.loc[_cm_mask_nc].copy()
-    # Baseline: all officers present this month (any product)
-    _officers_all = (
-        _cm_df_nc.groupby("Loan Officer Name", dropna=True)["Loan ID"].nunique().reset_index().drop(columns=["Loan ID"]).rename(columns={"Loan Officer Name": "Officer"})
-    )
-    # Filter to product == Zidisha Simba (normalized)
-    _cm_df_nc["__prod_norm"] = (
-        _cm_df_nc[_product_col]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace("_", " ")
-        .str.replace(r"\s+", " ", regex=True)
-    )
-    _simba = _cm_df_nc[_cm_df_nc["__prod_norm"] == "zidisha simba"].copy()
-
-    _sum_simba = (
-        _simba.groupby("Loan Officer Name", dropna=True)["Principal Amount"].sum().reset_index()
-        .rename(columns={"Loan Officer Name": "Officer", "Principal Amount": "Principal Amount (Zidisha Simba)"})
-    )
-
-    # Total (all products) disbursement per officer in current month
-    _sum_all_products = (
-        _cm_df_nc.groupby("Loan Officer Name", dropna=True)["Principal Amount"].sum().reset_index()
-        .rename(columns={"Loan Officer Name": "Officer", "Principal Amount": "Principal Amount (All Products)"})
-    )
-
-    _table_nc = (
-        _officers_all
-        .merge(_sum_all_products, on="Officer", how="left")
-        .merge(_sum_simba, on="Officer", how="left")
-        .fillna({
-            "Principal Amount (All Products)": 0,
-            "Principal Amount (Zidisha Simba)": 0,
-        })
-        .sort_values("Principal Amount (Zidisha Simba)", ascending=False)
-    )
-
-    # Table
-    st.dataframe(
-        _table_nc.assign(**{
-            "Principal Amount (Zidisha Simba)": _table_nc["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-            "Principal Amount (All Products)": _table_nc["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
-        }),
-        use_container_width=True,
-    )
-
-    # By Branch table
-    st.markdown("#### By Branch — Current Month")
-    _branches_all = (
-        _cm_df_nc.groupby("Branch Name", dropna=True)["Loan ID"].nunique().reset_index().drop(columns=["Loan ID"]).rename(columns={"Branch Name": "Branch"})
-    )
-    _sum_all_branch = (
-        _cm_df_nc.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index().rename(columns={"Branch Name": "Branch", "Principal Amount": "Principal Amount (All Products)"})
-    )
-    _sum_simba_branch = (
-        _simba.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index().rename(columns={"Branch Name": "Branch", "Principal Amount": "Principal Amount (Zidisha Simba)"})
-    )
-    _table_branch = (
-        _branches_all
-        .merge(_sum_all_branch, on="Branch", how="left")
-        .merge(_sum_simba_branch, on="Branch", how="left")
-        .fillna({
-            "Principal Amount (All Products)": 0,
-            "Principal Amount (Zidisha Simba)": 0,
-        })
-        .sort_values("Principal Amount (Zidisha Simba)", ascending=False)
-    )
-    st.dataframe(
-        _table_branch.assign(**{
-            "Principal Amount (All Products)": _table_branch["Principal Amount (All Products)"].map(lambda v: f"{float(v):,.0f}"),
-            "Principal Amount (Zidisha Simba)": _table_branch["Principal Amount (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-        }),
-        use_container_width=True,
-    )
-
-    # By Branch — July vs August (Zidisha Simba) table
-    st.markdown("#### By Branch — July vs August (Zidisha Simba)")
-    # Use full filtered dataset to capture July/August of the latest year available
-    _filtered_all = filtered.copy()
-    _filtered_all["__date"] = pd.to_datetime(_filtered_all["Disbursed On Date"]).dt.floor("D")
-    _filtered_all["__prod_norm"] = (
-        _filtered_all[_product_col]
-        .astype(str).str.strip().str.lower().str.replace("_", " ").str.replace(r"\s+", " ", regex=True)
-    )
-    _simba_all = _filtered_all[_filtered_all["__prod_norm"] == "zidisha simba"].copy()
-    if _simba_all.empty:
-        st.info("No 'Zidisha Simba' records available in the current filters to compute July/August table.")
-    else:
-        _simba_all["__year"] = pd.to_datetime(_simba_all["__date"]).dt.year
-        _simba_all["__month"] = pd.to_datetime(_simba_all["__date"]).dt.month
-        _candidate_years = sorted(_simba_all.loc[_simba_all["__month"].isin([7, 8]), "__year"].unique())
-        if not _candidate_years:
-            st.info("No July/August 'Zidisha Simba' records available in the current filters.")
-        else:
-            _latest_year = int(_candidate_years[-1])
-            _july = _simba_all[(_simba_all["__year"] == _latest_year) & (_simba_all["__month"] == 7)]
-            _aug = _simba_all[(_simba_all["__year"] == _latest_year) & (_simba_all["__month"] == 8)]
-
-    _july_sum = (
-        _july.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index()
-        .rename(columns={"Branch Name": "Branch", "Principal Amount": "July Principal (Zidisha Simba)"})
-    )
-    _july_sum["Branch"] = _july_sum["Branch"].astype(str).str.strip()
-    _aug_sum = (
-        _aug.groupby("Branch Name", dropna=True)["Principal Amount"].sum().reset_index()
-        .rename(columns={"Branch Name": "Branch", "Principal Amount": "August Principal (Zidisha Simba)"})
-    )
-    _aug_sum["Branch"] = _aug_sum["Branch"].astype(str).str.strip()
-
-    # Compute defaulted for July/Aug (Expected - Repaid, floored at 0)
-    _july_er = (
-        _july.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
-        .sum().reset_index()
+    _prev_grp = (
+        _prev_df.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
+        .sum()
+        .reset_index()
         .rename(columns={
-            "Branch Name": "Branch",
-            "Total Expected Repayment": "July Expected (Zidisha Simba)",
-            "Total Repayment": "July Repaid (Zidisha Simba)",
+            "Total Expected Repayment": "Total Expected Repayment Derived",
+            "Total Repayment": "Total Repayment Derived",
         })
     )
-    _july_er["Branch"] = _july_er["Branch"].astype(str).str.strip()
-    _july_er["Defaulted July (Zidisha Simba)"] = (
-        pd.to_numeric(_july_er["July Expected (Zidisha Simba)"], errors="coerce")
-        - pd.to_numeric(_july_er["July Repaid (Zidisha Simba)"], errors="coerce")
-    ).clip(lower=0)
 
-    _aug_er = (
-        _aug.groupby("Branch Name", dropna=True)[["Total Expected Repayment", "Total Repayment"]]
-        .sum().reset_index()
-        .rename(columns={
-            "Branch Name": "Branch",
-            "Total Expected Repayment": "August Expected (Zidisha Simba)",
-            "Total Repayment": "August Repaid (Zidisha Simba)",
-        })
-    )
-    _aug_er["Branch"] = _aug_er["Branch"].astype(str).str.strip()
-    _aug_er["Defaulted August (Zidisha Simba)"] = (
-        pd.to_numeric(_aug_er["August Expected (Zidisha Simba)"], errors="coerce")
-        - pd.to_numeric(_aug_er["August Repaid (Zidisha Simba)"], errors="coerce")
-    ).clip(lower=0)
+    # Defaulted Amount = Expected - Repaid (floored at 0)
+    _exp = pd.to_numeric(_prev_grp["Total Expected Repayment Derived"], errors="coerce")
+    _rep = pd.to_numeric(_prev_grp["Total Repayment Derived"], errors="coerce")
+    _prev_grp["Defaulted Amount"] = (_exp - _rep).clip(lower=0)
 
-    _branches_union = pd.DataFrame({
-        "Branch": sorted(set(_july_sum["Branch"].astype(str)).union(set(_aug_sum["Branch"].astype(str))))
-    })
-    _branches_union["Branch"] = _branches_union["Branch"].astype(str).str.strip()
-    _table_jul_aug = (
-        _branches_union
-        .merge(_july_sum, on="Branch", how="left")
-        .merge(_aug_sum, on="Branch", how="left")
-        .merge(_july_er[["Branch", "Defaulted July (Zidisha Simba)"]], on="Branch", how="left")
-        .merge(_aug_er[["Branch", "Defaulted August (Zidisha Simba)"]], on="Branch", how="left")
-        .fillna({
-            "July Principal (Zidisha Simba)": 0,
-            "August Principal (Zidisha Simba)": 0,
-            "Defaulted July (Zidisha Simba)": 0,
-            "Defaulted August (Zidisha Simba)": 0,
-        })
-        .sort_values("August Principal (Zidisha Simba)", ascending=False)
-    )
+    # Repayment % (Derived)
+    _prev_grp["Repayment % (Derived)"] = np.where(_exp > 0, _rep / _exp, np.nan)
 
+    # Optional: totals row labeled 'Zidisha'
+    _totals = {
+        "Branch": "Zidisha",
+        "Total Expected Repayment Derived": _exp.sum(),
+        "Total Repayment Derived": _rep.sum(),
+        "Defaulted Amount": (_exp.sum() - _rep.sum()) if _exp.sum() > 0 else 0,
+        "Repayment % (Derived)": (_rep.sum() / _exp.sum()) if _exp.sum() > 0 else np.nan,
+    }
+    _prev_table = pd.concat([_prev_grp, pd.DataFrame([_totals])], ignore_index=True)
+
+    _display_prev = _prev_table[[
+        "Total Expected Repayment Derived",
+        "Total Repayment Derived",
+        "Defaulted Amount",
+        "Repayment % (Derived)",
+    ]]
     st.dataframe(
-        _table_jul_aug.assign(**{
-            "July Principal (Zidisha Simba)": _table_jul_aug["July Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-            "August Principal (Zidisha Simba)": _table_jul_aug["August Principal (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-            "Defaulted July (Zidisha Simba)": _table_jul_aug["Defaulted July (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
-            "Defaulted August (Zidisha Simba)": _table_jul_aug["Defaulted August (Zidisha Simba)"].map(lambda v: f"{float(v):,.0f}"),
+        _display_prev.assign(**{
+            "Total Expected Repayment Derived": _display_prev["Total Expected Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+            "Total Repayment Derived": _display_prev["Total Repayment Derived"].map(lambda v: f"{float(v):,.0f}"),
+            "Defaulted Amount": _display_prev["Defaulted Amount"].map(lambda v: f"{float(v):,.0f}"),
+            "Repayment % (Derived)": _display_prev["Repayment % (Derived)"].map(lambda v: f"{(float(v)*100):.1f}%" if pd.notna(v) else "-"),
         }),
         use_container_width=True,
     )
-
-
 
