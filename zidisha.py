@@ -75,20 +75,29 @@ def load_dataset(file_path: str) -> pd.DataFrame:
     # Build a mapping from found alias -> canonical name (case-insensitive)
     actual_by_lower = {str(col).lower(): col for col in df.columns}
     alias_to_canonical = {}
+    # First pass: map non-derived aliases, but skip derived columns
+    derived_columns_to_preserve = set()
     for canonical, aliases in expected_cols.items():
         for alias in aliases:
             alias_lower = str(alias).lower()
             if alias_lower in actual_by_lower:
                 actual_name = actual_by_lower[alias_lower]
+                # Preserve Derived columns as separate columns (don't rename them)
+                if " Derived".lower() in actual_name.lower():
+                    derived_columns_to_preserve.add(actual_name)
+                    continue
                 alias_to_canonical[actual_name] = canonical
                 break
 
-    # Additional heuristic: map any "<Canonical> Derived" to canonical
+    # Second pass: map derived columns to canonical only if canonical column doesn't exist
     for canonical in list(expected_cols.keys()):
         derived_name_lower = f"{canonical} Derived".lower()
+        canonical_lower = canonical.lower()
         if derived_name_lower in actual_by_lower:
             actual_name = actual_by_lower[derived_name_lower]
-            alias_to_canonical[actual_name] = canonical
+            # Only rename if canonical doesn't exist (preserve derived as separate if both exist)
+            if canonical_lower not in actual_by_lower:
+                alias_to_canonical[actual_name] = canonical
 
     # Rename columns to canonical where possible
     if alias_to_canonical:
@@ -105,6 +114,10 @@ def load_dataset(file_path: str) -> pd.DataFrame:
     # Type conversions
     date_col = "Disbursed On Date"
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    
+    # Convert Expected Matured On Date if it exists
+    if "Expected Matured On Date" in df.columns:
+        df["Expected Matured On Date"] = pd.to_datetime(df["Expected Matured On Date"], errors="coerce")
 
     amount_cols = [
         "Principal Amount",
@@ -114,6 +127,12 @@ def load_dataset(file_path: str) -> pd.DataFrame:
     ]
     for c in amount_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+    
+    # Also convert Derived columns if they exist (as separate columns)
+    derived_cols = ["Total Expected Repayment Derived", "Total Repayment Derived"]
+    for c in derived_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
     # Derived fields
     df["Month"] = df[date_col].dt.to_period("M").dt.to_timestamp()
@@ -613,12 +632,12 @@ if _inline_val is not None:
     day_date = pd.to_datetime(_inline_val).normalize()
 else:
     day_date = pd.to_datetime(_sidebar_val).normalize()
-# Build day slice using Expected Matured On Date if available; fallback to Disbursed On Date
+# Build day slice using Expected Matured On Date (required for Day Performance)
 _matured_col_for_day = "Expected Matured On Date"
-if _matured_col_for_day in filtered.columns:
-    _base_day_df = filtered.assign(Date=pd.to_datetime(filtered[_matured_col_for_day]).dt.floor("D"))
-else:
-    _base_day_df = filtered.assign(Date=pd.to_datetime(filtered["Disbursed On Date"]).dt.floor("D"))
+if _matured_col_for_day not in filtered.columns:
+    st.error(f"Column '{_matured_col_for_day}' is required for Day Performance table but not found in the dataset.")
+    st.stop()
+_base_day_df = filtered.assign(Date=pd.to_datetime(filtered[_matured_col_for_day], errors="coerce").dt.floor("D"))
 day_df = _base_day_df.query("Date == @day_date")
 
 # Repayment percentage checkpoints for current-month disbursements at 7/14/21/28 days
@@ -643,28 +662,36 @@ baseline = pd.DataFrame({
     "Branch Name": all_branches,
 })
 
+# Use Derived columns if available, otherwise fall back to regular columns
+_expected_col = "Total Expected Repayment Derived" if "Total Expected Repayment Derived" in day_df.columns else "Total Expected Repayment"
+_repayment_col = "Total Repayment Derived" if "Total Repayment Derived" in day_df.columns else "Total Repayment"
+
 day_branch = (
-    day_df.groupby("Branch Name", dropna=True)[["Total Repayment", "Total Expected Repayment"]]
+    day_df.groupby("Branch Name", dropna=True)[[_repayment_col, _expected_col]]
     .sum()
     .reset_index()
+    .rename(columns={
+        _repayment_col: "Total Repayment Derived",
+        _expected_col: "Total Expected Repayment Derived"
+    })
 )
 
 day_branch = baseline.merge(day_branch, on="Branch Name", how="left").fillna(0)
 
 # Add aggregated "Zidisha" row = sum of all branches except those matching "advance"
 _non_advance_mask = ~day_branch["Branch Name"].str.strip().str.lower().str.contains("advance", na=False)
-_agg = day_branch.loc[_non_advance_mask, ["Total Repayment", "Total Expected Repayment"]].sum()
+_agg = day_branch.loc[_non_advance_mask, ["Total Repayment Derived", "Total Expected Repayment Derived"]].sum()
 zidisha_row = pd.DataFrame({
     "Branch Name": ["Zidisha"],
-    "Total Repayment": [_agg.get("Total Repayment", 0.0)],
-    "Total Expected Repayment": [_agg.get("Total Expected Repayment", 0.0)],
+    "Total Repayment Derived": [_agg.get("Total Repayment Derived", 0.0)],
+    "Total Expected Repayment Derived": [_agg.get("Total Expected Repayment Derived", 0.0)],
 })
 day_branch = pd.concat([zidisha_row, day_branch], ignore_index=True)
 
 table_day = day_branch.copy()
 table_day["Repayment %"] = np.where(
-    table_day["Total Expected Repayment"] > 0,
-    table_day["Total Repayment"] / table_day["Total Expected Repayment"],
+    table_day["Total Expected Repayment Derived"] > 0,
+    table_day["Total Repayment Derived"] / table_day["Total Expected Repayment Derived"],
     np.nan,
 )
 # Remove Kilimani from rows (case-insensitive), preserve Zidisha aggregate
@@ -682,8 +709,8 @@ if _is_zidisha.any():
     table_day = pd.concat([_o, _z], ignore_index=True)
 st.dataframe(
     table_day.assign(**{
-        "Total Expected Repayment": table_day["Total Expected Repayment"].map(lambda v: f"{v:,.0f}"),
-        "Total Repayment": table_day["Total Repayment"].map(lambda v: f"{v:,.0f}"),
+        "Total Expected Repayment Derived": table_day["Total Expected Repayment Derived"].map(lambda v: f"{v:,.0f}"),
+        "Total Repayment Derived": table_day["Total Repayment Derived"].map(lambda v: f"{v:,.0f}"),
         "Repayment %": table_day["Repayment %"].map(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-"),
     }),
     use_container_width=True,
