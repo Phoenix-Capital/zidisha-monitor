@@ -9,20 +9,17 @@ def load_data():
     df = pd.read_excel("sample.xlsx")
     df.columns = df.columns.str.strip()
 
-    # Parse dates
     df["Expected Matured On Date"] = pd.to_datetime(
         df["Expected Matured On Date"],
         errors="coerce",
         dayfirst=True
     )
 
-    # Ensure numeric base columns exist (needed for fallbacks)
     for c in ["Principal Amount", "Principal Outstanding Derived", "Penalties Overdue Derived"]:
         if c not in df.columns:
             df[c] = 0
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-    # Ensure "Total Expected Repayment Derived" exists; if not, compute a fallback
     if "Total Expected Repayment Derived" not in df.columns:
         df["Total Expected Repayment Derived"] = df["Principal Amount"] + df["Penalties Overdue Derived"]
     else:
@@ -30,12 +27,12 @@ def load_data():
             df["Total Expected Repayment Derived"], errors="coerce"
         ).fillna(0)
 
-    # ✅ Total Repayment Derived (same dataset, same filter will apply later)
-    # If the column exists, use it; otherwise compute it from principal - outstanding
     if "Total Repayment Derived" not in df.columns:
         df["Total Repayment Derived"] = df["Principal Amount"] - df["Principal Outstanding Derived"]
     else:
-        df["Total Repayment Derived"] = pd.to_numeric(df["Total Repayment Derived"], errors="coerce").fillna(0)
+        df["Total Repayment Derived"] = pd.to_numeric(
+            df["Total Repayment Derived"], errors="coerce"
+        ).fillna(0)
 
     return df
 
@@ -43,23 +40,20 @@ def load_data():
 df = load_data()
 
 # -------------------------------------------------
-# 1) Filter: Expected Matured On Date between Jan 1 and Jan 21, 2026 (inclusive)
+# Filter maturity window
 # -------------------------------------------------
-start_date = pd.Timestamp("2026-01-01")
-end_date = pd.Timestamp("2026-01-21")
-
 df = df[
-    (df["Expected Matured On Date"] >= start_date) &
-    (df["Expected Matured On Date"] <= end_date)
+    (df["Expected Matured On Date"] >= "2026-01-01") &
+    (df["Expected Matured On Date"] <= "2026-01-21")
 ].copy()
 
 # -------------------------------------------------
-# 2) Exclude Advans Branch permanently
+# Exclude Advans Branch
 # -------------------------------------------------
 df = df[~df["Branch Name"].astype(str).str.strip().str.lower().eq("advans branch")]
 
 # -------------------------------------------------
-# 3) Group expected per branch (UNCHANGED) + add Total Repayment Derived (same filter)
+# Aggregate
 # -------------------------------------------------
 expected_by_branch = (
     df.groupby("Branch Name", as_index=False)[
@@ -70,7 +64,7 @@ expected_by_branch = (
 )
 
 # -------------------------------------------------
-# 4) Add static Collected by 21 (from your screenshot)
+# Static collected by 21
 # -------------------------------------------------
 collected_by_21_map = {
     "Kitengala Branch": 128_600,
@@ -87,16 +81,31 @@ expected_by_branch["Collected by 21"] = (
 )
 
 # -------------------------------------------------
-# 5) Compute "Collected after 21st" (remaining vs expected)
+# ✅ NEW LOGIC
+# Collected after 21 = Total Repayment Derived − Collected by 21
 # -------------------------------------------------
 expected_by_branch["Collected after 21"] = (
-    expected_by_branch["Expected (maturing 1–21 Jan)"] - expected_by_branch["Collected by 21"]
+    expected_by_branch["Total Repayment Derived"] -
+    expected_by_branch["Collected by 21"]
 ).clip(lower=0)
 
 # -------------------------------------------------
-# 6) Format currency and show ONE TABLE ONLY
+# ✅ Commission = 3% of Collected after 21
 # -------------------------------------------------
-for c in ["Expected (maturing 1–21 Jan)", "Total Repayment Derived", "Collected by 21", "Collected after 21"]:
+expected_by_branch["Commission (3%)"] = (
+    expected_by_branch["Collected after 21"] * 0.03
+)
+
+# -------------------------------------------------
+# Format currency
+# -------------------------------------------------
+for c in [
+    "Expected (maturing 1–21 Jan)",
+    "Total Repayment Derived",
+    "Collected by 21",
+    "Collected after 21",
+    "Commission (3%)",
+]:
     expected_by_branch[c] = expected_by_branch[c].map(lambda x: f"Ksh {x:,.0f}")
 
 st.dataframe(expected_by_branch, use_container_width=True)
