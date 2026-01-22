@@ -24,7 +24,6 @@ st.set_page_config(
     page_title="Phoenix Capital • Loan Performance Dashboard",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 
@@ -218,7 +217,6 @@ period_df = filtered.loc[mask_period].copy()
 
 # Day performance date default to today (or OVERRIDE_DATE if set)
 _default_day = (OVERRIDE_DATE if OVERRIDE_DATE is not None else pd.Timestamp.today().normalize()).to_pydatetime()
-_sidebar_val = _default_day
 
 
 # -------------------------------------------------------------
@@ -470,9 +468,9 @@ branch_expected = branch_expected.sort_values("Repayment %", ascending=False)
 
 col1, col2 = st.columns(2)
 with col1:
-    st.plotly_chart(fig_branch_disbursed, use_container_width=True)
+    st.plotly_chart(fig_branch_disbursed, width='stretch')
 with col2:
-    st.plotly_chart(fig_branch_rep_vs_out, use_container_width=True)
+    st.plotly_chart(fig_branch_rep_vs_out, width='stretch')
 
 # Card grid for branch repayment percentage
 if not branch_expected.empty:
@@ -572,9 +570,9 @@ fig_trend.update_layout(xaxis_title="Month", yaxis_title="Amount")
 
 col3, col4 = st.columns(2)
 with col3:
-    st.plotly_chart(fig_donut, use_container_width=True)
+    st.plotly_chart(fig_donut, width='stretch')
 with col4:
-    st.plotly_chart(fig_trend, use_container_width=True)
+    st.plotly_chart(fig_trend, width='stretch')
 
 
 # -------------------------------------------------------------
@@ -612,14 +610,14 @@ fig_same_period = px.line(
 )
 fig_same_period.update_layout(xaxis_title="Date", yaxis_title="Amount")
 
-st.plotly_chart(fig_same_period, use_container_width=True)
+st.plotly_chart(fig_same_period, width='stretch')
 
 # Day performance by branch: Repaid vs Expected (selectable date)
 st.markdown("#### Day Performance — selected date")
 # Allow selecting future dates up to +5 years from today
 _max_selectable_date = (pd.Timestamp.today().normalize() + pd.Timedelta(days=365*5)).to_pydatetime()
 st.date_input(
-    "Change day here (or via sidebar)",
+    "Change day here",
     value=st.session_state.get("day_perf_date", _default_day),
     key="day_perf_date_inline",
     help="Defaults to the same day last month; select any date within available data.",
@@ -631,7 +629,7 @@ _inline_val = st.session_state.get("day_perf_date_inline")
 if _inline_val is not None:
     day_date = pd.to_datetime(_inline_val).normalize()
 else:
-    day_date = pd.to_datetime(_sidebar_val).normalize()
+    day_date = pd.to_datetime(_default_day).normalize()
 # Build day slice using Expected Matured On Date (required for Day Performance)
 _matured_col_for_day = "Expected Matured On Date"
 if _matured_col_for_day not in filtered.columns:
@@ -713,40 +711,7 @@ st.dataframe(
         "Total Repayment Derived": table_day["Total Repayment Derived"].map(lambda v: f"{v:,.0f}"),
         "Repayment %": table_day["Repayment %"].map(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-"),
     }),
-    use_container_width=True,
-)
-
-## Officer day performance table (selected date)
-st.markdown("#### Day Performance — Officers (selected date)")
-
-# Ensure all currently selected officers appear (with zeros if no activity on that day)
-all_officers = sorted(period_df["Loan Officer Name"].dropna().unique().tolist())
-officer_baseline = pd.DataFrame({
-    "Loan Officer Name": all_officers,
-})
-
-officer_day = (
-    day_df.groupby("Loan Officer Name", dropna=True)[["Total Repayment", "Total Expected Repayment"]]
-    .sum()
-    .reset_index()
-)
-officer_day = officer_baseline.merge(officer_day, on="Loan Officer Name", how="left").fillna(0)
-
-table_officer_day = officer_day.copy()
-table_officer_day["Repayment %"] = np.where(
-    table_officer_day["Total Expected Repayment"] > 0,
-    table_officer_day["Total Repayment"] / table_officer_day["Total Expected Repayment"],
-    np.nan,
-)
-table_officer_day = table_officer_day.sort_values("Repayment %", ascending=False)
-
-st.dataframe(
-    table_officer_day.rename(columns={"Loan Officer Name": "Officer"}).assign(**{
-        "Total Expected Repayment": table_officer_day["Total Expected Repayment"].map(lambda v: f"{v:,.0f}"),
-        "Total Repayment": table_officer_day["Total Repayment"].map(lambda v: f"{v:,.0f}"),
-        "Repayment %": table_officer_day["Repayment %"].map(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-"),
-    }),
-    use_container_width=True,
+    width='stretch',
 )
 
 st.markdown("### 3) Loan Officer Performance")
@@ -779,9 +744,9 @@ fig_officer_repaid.update_layout(xaxis_title="Officer", yaxis_title="Amount", co
 
 col5, col6 = st.columns(2)
 with col5:
-    st.plotly_chart(fig_officer_loans, use_container_width=True)
+    st.plotly_chart(fig_officer_loans, width='stretch')
 with col6:
-    st.plotly_chart(fig_officer_repaid, use_container_width=True)
+    st.plotly_chart(fig_officer_repaid, width='stretch')
 
 
 # -------------------------------------------------------------
@@ -810,9 +775,9 @@ fig_scatter.update_layout(xaxis_title="Principal Amount", yaxis_title="Total Rep
 
 col7, col8 = st.columns(2)
 with col7:
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
 with col8:
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter, width='stretch')
 
 
 # Footer note
@@ -883,6 +848,6 @@ else:
             "Defaulted Amount": _display_prev["Defaulted Amount"].map(lambda v: f"{float(v):,.0f}"),
             "Repayment % (Derived)": _display_prev["Repayment % (Derived)"].map(lambda v: f"{(float(v)*100):.1f}%" if pd.notna(v) else "-"),
         }),
-        use_container_width=True,
+        width='stretch',
     )
 
